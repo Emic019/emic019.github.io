@@ -5,7 +5,7 @@
   --text-color: #5a5a5a;
   --blockquote-color: #666;
   --link-color: #5a5a5a;
-  --link-hover-color: #dfc6df;
+  --link-hover-color: #70537a;
   --brand-color: #fff;
   --brand-hover-color: #fff;
   --table-row-odd-bg-color: #f9f9f9;
@@ -15,9 +15,9 @@
   --btn-default-bg: #fff;
   --btn-default-color: #5a5a5a;
   --btn-default-border-color: #5a5a5a;
-  --btn-default-hover-bg: #dfc6df;
+  --btn-default-hover-bg: #70537a;
   --btn-default-hover-color: #fff;
-  --btn-default-hover-border-color: #dfc6df;
+  --btn-default-hover-border-color: #70537a;
   --highlight-background: #f3f3f3;
   --highlight-foreground: #444;
   --highlight-gutter-background: #e1e1e1;
@@ -1203,7 +1203,7 @@ pre code {
     left: 0;
   }
   .sidebar {
-    background: #dfc6df;
+    background: #70537a;
     bottom: 0;
     box-shadow: inset 0 2px 6px #000;
     max-height: 100vh;
@@ -1234,7 +1234,7 @@ pre code {
     vertical-align: middle;
   }
   .links-of-author a::before {
-    background: #3e40a6;
+    background: #45d139;
     display: inline-block;
     margin-right: 3px;
     transform: translateY(-2px);
@@ -1459,7 +1459,7 @@ pre code {
   height: 16px;
   padding: 5px;
   width: 16px;
-  background: #dfc6df;
+  background: #70537a;
   cursor: pointer;
   opacity: 0.6;
   position: fixed;
@@ -1661,7 +1661,7 @@ pre code {
   height: 26px;
   transition: 0.2s ease-in-out;
   transition-property: bottom;
-  background: #dfc6df;
+  background: #70537a;
   cursor: pointer;
   opacity: 0.6;
   position: fixed;
@@ -1815,7 +1815,7 @@ pre code {
   border-bottom-color: #666;
 }
 .posts-collapse .post-content .post-header:hover::before {
-  background: #dfc6df;
+  background: #70537a;
 }
 .posts-collapse .post-content .post-meta-container {
   display: inline;
@@ -2206,11 +2206,11 @@ pre code {
   padding-left: 10px;
 }
 .event-list hr {
-  background: #dfc6df;
+  background: #70537a;
   margin: 20px 0 45px;
 }
 .event-list hr::after {
-  background: #dfc6df;
+  background: #70537a;
   color: #fff;
   content: 'NOW';
   display: inline-block;
@@ -2218,7 +2218,7 @@ pre code {
   padding: 0 5px;
 }
 .event-list .event {
-  --event-background: #dfc6df;
+  --event-background: #70537a;
   --event-foreground: #bbb;
   --event-title: #fff;
   background: var(--event-background);
@@ -2282,7 +2282,7 @@ pre code {
 .event-list .event-past {
   --event-background: #f5f5f5;
   --event-foreground: #999;
-  --event-title: #dfc6df;
+  --event-title: #70537a;
 }
 @keyframes dot-flash {
   from {
@@ -2411,7 +2411,7 @@ ul.breadcrumb li:last-child {
   cursor: pointer;
 }
 .search-popup .popup-btn-close:hover .fa {
-  color: #dfc6df;
+  color: #70537a;
 }
 .search-popup .search-header {
   background: #f2af78;
