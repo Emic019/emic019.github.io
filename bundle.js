@@ -1,93 +1,537 @@
-if (!window.NexT) window.NexT = {};
+/* global Fluid, CONFIG */
 
-(function() {
-  const className = 'next-config';
+window.requestAnimationFrame = window.requestAnimationFrame || window.webkitRequestAnimationFrame || window.mozRequestAnimationFrame;
 
-  const staticConfig = {};
-  let variableConfig = {};
+Fluid.utils = {
 
-  const parse = text => JSON.parse(text || '{}');
+  listenScroll: function(callback) {
+    var dbc = new Debouncer(callback);
+    window.addEventListener('scroll', dbc, false);
+    dbc.handleEvent();
+    return dbc;
+  },
 
-  const update = name => {
-    const targetEle = document.querySelector(`.${className}[data-name="${name}"]`);
-    if (!targetEle) return;
-    const parsedConfig = parse(targetEle.text);
-    if (name === 'main') {
-      Object.assign(staticConfig, parsedConfig);
+  unlistenScroll: function(callback) {
+    window.removeEventListener('scroll', callback);
+  },
+
+  listenDOMLoaded(callback) {
+    if (document.readyState !== 'loading') {
+      callback();
     } else {
-      variableConfig[name] = parsedConfig;
+      document.addEventListener('DOMContentLoaded', function () {
+        callback();
+      });
     }
-  };
+  },
 
-  update('main');
+  scrollToElement: function(target, offset) {
+    var of = jQuery(target).offset();
+    if (of) {
+      jQuery('html,body').animate({
+        scrollTop: of.top + (offset || 0),
+        easing   : 'swing'
+      });
+    }
+  },
 
-  window.CONFIG = new Proxy({}, {
-    get(overrideConfig, name) {
-      let existing;
-      if (name in staticConfig) {
-        existing = staticConfig[name];
-      } else {
-        if (!(name in variableConfig)) update(name);
-        existing = variableConfig[name];
-      }
+  elementVisible: function(element, offsetFactor) {
+    offsetFactor = offsetFactor && offsetFactor >= 0 ? offsetFactor : 0;
+    var rect = element.getBoundingClientRect();
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+    return (
+      (rect.top >= 0 && rect.top <= viewportHeight * (1 + offsetFactor) + rect.height / 2) ||
+      (rect.bottom >= 0 && rect.bottom <= viewportHeight * (1 + offsetFactor) + rect.height / 2)
+    );
+  },
 
-      // For unset override and mixable existing
-      if (!(name in overrideConfig) && typeof existing === 'object') {
-        // Get ready to mix.
-        overrideConfig[name] = {};
-      }
+  waitElementVisible: function(selectorOrElement, callback, offsetFactor) {
+    var runningOnBrowser = typeof window !== 'undefined';
+    var isBot = (runningOnBrowser && !('onscroll' in window))
+      || (typeof navigator !== 'undefined' && /(gle|ing|ro|msn)bot|crawl|spider|yand|duckgo/i.test(navigator.userAgent));
+    if (!runningOnBrowser || isBot) {
+      return;
+    }
 
-      if (name in overrideConfig) {
-        const override = overrideConfig[name];
+    offsetFactor = offsetFactor && offsetFactor >= 0 ? offsetFactor : 0;
 
-        // When mixable
-        if (typeof override === 'object' && typeof existing === 'object') {
-          // Mix, proxy changes to the override.
-          return new Proxy({ ...existing, ...override }, {
-            set(target, prop, value) {
-              target[prop] = value;
-              override[prop] = value;
-              return true;
+    function waitInViewport(element) {
+      Fluid.utils.listenDOMLoaded(function() {
+        if (Fluid.utils.elementVisible(element, offsetFactor)) {
+          callback();
+          return;
+        }
+        if ('IntersectionObserver' in window) {
+          var io = new IntersectionObserver(function(entries, ob) {
+            if (entries[0].isIntersecting) {
+              callback();
+              ob.disconnect();
+            }
+          }, {
+            threshold : [0],
+            rootMargin: (window.innerHeight || document.documentElement.clientHeight) * offsetFactor + 'px'
+          });
+          io.observe(element);
+        } else {
+          var wrapper = Fluid.utils.listenScroll(function() {
+            if (Fluid.utils.elementVisible(element, offsetFactor)) {
+              Fluid.utils.unlistenScroll(wrapper);
+              callback();
             }
           });
         }
+      });
+    }
 
-        return override;
+    if (typeof selectorOrElement === 'string') {
+      this.waitElementLoaded(selectorOrElement, function(element) {
+        waitInViewport(element);
+      });
+    } else {
+      waitInViewport(selectorOrElement);
+    }
+  },
+
+  waitElementLoaded: function(selector, callback) {
+    var runningOnBrowser = typeof window !== 'undefined';
+    var isBot = (runningOnBrowser && !('onscroll' in window))
+      || (typeof navigator !== 'undefined' && /(gle|ing|ro|msn)bot|crawl|spider|yand|duckgo/i.test(navigator.userAgent));
+    if (!runningOnBrowser || isBot) {
+      return;
+    }
+
+    if ('MutationObserver' in window) {
+      var mo = new MutationObserver(function(records, ob) {
+        var ele = document.querySelector(selector);
+        if (ele) {
+          callback(ele);
+          ob.disconnect();
+        }
+      });
+      mo.observe(document, { childList: true, subtree: true });
+    } else {
+      Fluid.utils.listenDOMLoaded(function() {
+        var waitLoop = function() {
+          var ele = document.querySelector(selector);
+          if (ele) {
+            callback(ele);
+          } else {
+            setTimeout(waitLoop, 100);
+          }
+        };
+        waitLoop();
+      });
+    }
+  },
+
+  createScript: function(url, onload) {
+    var s = document.createElement('script');
+    s.setAttribute('src', url);
+    s.setAttribute('type', 'text/javascript');
+    s.setAttribute('charset', 'UTF-8');
+    s.async = false;
+    if (typeof onload === 'function') {
+      if (window.attachEvent) {
+        s.onreadystatechange = function() {
+          var e = s.readyState;
+          if (e === 'loaded' || e === 'complete') {
+            s.onreadystatechange = null;
+            onload();
+          }
+        };
+      } else {
+        s.onload = onload;
       }
-
-      // Only when not mixable and override hasn't been set.
-      return existing;
     }
-  });
+    var ss = document.getElementsByTagName('script');
+    var e = ss.length > 0 ? ss[ss.length - 1] : document.head || document.documentElement;
+    e.parentNode.insertBefore(s, e.nextSibling);
+  },
 
-  document.addEventListener('pjax:success', () => {
-    variableConfig = {};
-  });
-})();
-;
-/* global CONFIG */
+  createCssLink: function(url) {
+    var l = document.createElement('link');
+    l.setAttribute('rel', 'stylesheet');
+    l.setAttribute('type', 'text/css');
+    l.setAttribute('href', url);
+    var e = document.getElementsByTagName('link')[0]
+      || document.getElementsByTagName('head')[0]
+      || document.head || document.documentElement;
+    e.parentNode.insertBefore(l, e);
+  },
 
-window.addEventListener('tabs:register', () => {
-  let { activeClass } = CONFIG.comments;
-  if (CONFIG.comments.storage) {
-    activeClass = localStorage.getItem('comments_active') || activeClass;
-  }
-  if (activeClass) {
-    const activeTab = document.querySelector(`a[href="#comment-${activeClass}"]`);
-    if (activeTab) {
-      activeTab.click();
+  loadComments: function(selector, loadFunc) {
+    var ele = document.querySelector('#comments[lazyload]');
+    if (ele) {
+      var callback = function() {
+        loadFunc();
+        ele.removeAttribute('lazyload');
+      };
+      Fluid.utils.waitElementVisible(selector, callback, CONFIG.lazyload.offset_factor);
+    } else {
+      loadFunc();
     }
+  },
+
+  getBackgroundLightness(selectorOrElement) {
+    var ele = selectorOrElement;
+    if (typeof selectorOrElement === 'string') {
+      ele = document.querySelector(selectorOrElement);
+    }
+    var view = ele.ownerDocument.defaultView;
+    if (!view) {
+      view = window;
+    }
+    var rgbArr = view.getComputedStyle(ele).backgroundColor.replace(/rgba*\(/, '').replace(')', '').split(/,\s*/);
+    if (rgbArr.length < 3) {
+      return 0;
+    }
+    var colorCast = (0.213 * rgbArr[0]) + (0.715 * rgbArr[1]) + (0.072 * rgbArr[2]);
+    return colorCast === 0 || colorCast > 255 / 2 ? 1 : -1;
+  },
+
+  retry(handler, interval, times) {
+    if (times <= 0) {
+      return;
+    }
+    var next = function() {
+      if (--times >= 0 && !handler()) {
+        setTimeout(next, interval);
+      }
+    };
+    setTimeout(next, interval);
   }
-});
-if (CONFIG.comments.storage) {
-  window.addEventListener('tabs:click', event => {
-    if (!event.target.matches('.tabs-comment .tab-content .tab-pane')) return;
-    const commentClass = event.target.classList[1];
-    localStorage.setItem('comments_active', commentClass);
-  });
+
+};
+
+/**
+ * Handles debouncing of events via requestAnimationFrame
+ * @see http://www.html5rocks.com/en/tutorials/speed/animations/
+ * @param {Function} callback The callback to handle whichever event
+ */
+function Debouncer(callback) {
+  this.callback = callback;
+  this.ticking = false;
 }
+
+Debouncer.prototype = {
+  constructor: Debouncer,
+
+  /**
+   * dispatches the event to the supplied callback
+   * @private
+   */
+  update: function() {
+    this.callback && this.callback();
+    this.ticking = false;
+  },
+
+  /**
+   * ensures events don't get stacked
+   * @private
+   */
+  requestTick: function() {
+    if (!this.ticking) {
+      requestAnimationFrame(this.rafCallback || (this.rafCallback = this.update.bind(this)));
+      this.ticking = true;
+    }
+  },
+
+  /**
+   * Attach this as the event listeners
+   */
+  handleEvent: function() {
+    this.requestTick();
+  }
+};
 ;
-/* global NexT, CONFIG */
+/* global Fluid */
+
+/**
+ * Modified from https://blog.skk.moe/post/hello-darkmode-my-old-friend/
+ */
+(function(window, document) {
+  var rootElement = document.documentElement;
+  var colorSchemaStorageKey = 'Fluid_Color_Scheme';
+  var colorSchemaMediaQueryKey = '--color-mode';
+  var userColorSchemaAttributeName = 'data-user-color-scheme';
+  var defaultColorSchemaAttributeName = 'data-default-color-scheme';
+  var colorToggleButtonSelector = '#color-toggle-btn';
+  var colorToggleIconSelector = '#color-toggle-icon';
+  var iframeSelector = 'iframe';
+
+  function setLS(k, v) {
+    try {
+      localStorage.setItem(k, v);
+    } catch (e) {}
+  }
+
+  function removeLS(k) {
+    try {
+      localStorage.removeItem(k);
+    } catch (e) {}
+  }
+
+  function getLS(k) {
+    try {
+      return localStorage.getItem(k);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function getSchemaFromHTML() {
+    var res = rootElement.getAttribute(defaultColorSchemaAttributeName);
+    if (typeof res === 'string') {
+      return res.replace(/["'\s]/g, '');
+    }
+    return null;
+  }
+
+  function getSchemaFromCSSMediaQuery() {
+    var res = getComputedStyle(rootElement).getPropertyValue(
+      colorSchemaMediaQueryKey
+    );
+    if (typeof res === 'string') {
+      return res.replace(/["'\s]/g, '');
+    }
+    return null;
+  }
+
+  function resetSchemaAttributeAndLS() {
+    rootElement.setAttribute(userColorSchemaAttributeName, getDefaultColorSchema());
+    removeLS(colorSchemaStorageKey);
+  }
+
+  var validColorSchemaKeys = {
+    dark : true,
+    light: true
+  };
+
+  function getDefaultColorSchema() {
+    // 取默认字段的值
+    var schema = getSchemaFromHTML();
+    // 如果明确指定了 schema 则返回
+    if (validColorSchemaKeys[schema]) {
+      return schema;
+    }
+    // 默认优先按 prefers-color-scheme
+    schema = getSchemaFromCSSMediaQuery();
+    if (validColorSchemaKeys[schema]) {
+      return schema;
+    }
+    // 否则按本地时间是否大于 18 点或凌晨 0 ~ 6 点
+    var hours = new Date().getHours();
+    if (hours >= 18 || (hours >= 0 && hours <= 6)) {
+      return 'dark';
+    }
+    return 'light';
+  }
+
+  function applyCustomColorSchemaSettings(schema) {
+    // 接受从「开关」处传来的模式，或者从 localStorage 读取，否则按默认设置值
+    var current = schema || getLS(colorSchemaStorageKey) || getDefaultColorSchema();
+
+    if (current === getDefaultColorSchema()) {
+      // 当用户切换的显示模式和默认模式相同时，则恢复为自动模式
+      resetSchemaAttributeAndLS();
+    } else if (validColorSchemaKeys[current]) {
+      rootElement.setAttribute(
+        userColorSchemaAttributeName,
+        current
+      );
+    } else {
+      // 特殊情况重置
+      resetSchemaAttributeAndLS();
+      return;
+    }
+
+    // 根据当前模式设置图标
+    setButtonIcon(current);
+
+    // 设置代码高亮
+    setHighlightCSS(current);
+
+    // 设置其他应用
+    setApplications(current);
+  }
+
+  var invertColorSchemaObj = {
+    dark : 'light',
+    light: 'dark'
+  };
+
+  function getIconClass(scheme) {
+    return 'icon-' + scheme;
+  }
+
+  function toggleCustomColorSchema() {
+    var currentSetting = getLS(colorSchemaStorageKey);
+
+    if (validColorSchemaKeys[currentSetting]) {
+      // 从 localStorage 中读取模式，并取相反的模式
+      currentSetting = invertColorSchemaObj[currentSetting];
+    } else if (currentSetting === null) {
+      // 当 localStorage 中没有相关值，或者 localStorage 抛了 Error
+      // 先按照按钮的状态进行切换
+      var iconElement = document.querySelector(colorToggleIconSelector);
+      if (iconElement) {
+        currentSetting = iconElement.getAttribute('data');
+      }
+      if (!iconElement || !validColorSchemaKeys[currentSetting]) {
+        // 当 localStorage 中没有相关值，或者 localStorage 抛了 Error，则读取默认值并切换到相反的模式
+        currentSetting = invertColorSchemaObj[getSchemaFromCSSMediaQuery()];
+      }
+    } else {
+      return;
+    }
+    // 将相反的模式写入 localStorage
+    setLS(colorSchemaStorageKey, currentSetting);
+
+    return currentSetting;
+  }
+
+  function setButtonIcon(schema) {
+    if (validColorSchemaKeys[schema]) {
+      // 切换图标
+      var icon = getIconClass('dark');
+      if (schema) {
+        icon = getIconClass(schema);
+      }
+      var iconElement = document.querySelector(colorToggleIconSelector);
+      if (iconElement) {
+        iconElement.setAttribute(
+          'class',
+          'iconfont ' + icon
+        );
+        iconElement.setAttribute(
+          'data',
+          invertColorSchemaObj[schema]
+        );
+      } else {
+        // 如果图标不存在则说明图标还没加载出来，等到页面全部加载再尝试切换
+        Fluid.utils.waitElementLoaded(colorToggleIconSelector, function() {
+          var iconElement = document.querySelector(colorToggleIconSelector);
+          if (iconElement) {
+            iconElement.setAttribute(
+              'class',
+              'iconfont ' + icon
+            );
+            iconElement.setAttribute(
+              'data',
+              invertColorSchemaObj[schema]
+            );
+          }
+        });
+      }
+      if (document.documentElement.getAttribute('data-user-color-scheme')) {
+        var color = getComputedStyle(document.documentElement).getPropertyValue('--navbar-bg-color').trim()
+        document.querySelector('meta[name="theme-color"]').setAttribute('content', color)
+      }
+    }
+  }
+
+  function setHighlightCSS(schema) {
+    // 启用对应的代码高亮的样式
+    var lightCss = document.getElementById('highlight-css');
+    var darkCss = document.getElementById('highlight-css-dark');
+    if (schema === 'dark') {
+      if (darkCss) {
+        darkCss.removeAttribute('disabled');
+      }
+      if (lightCss) {
+        lightCss.setAttribute('disabled', '');
+      }
+    } else {
+      if (lightCss) {
+        lightCss.removeAttribute('disabled');
+      }
+      if (darkCss) {
+        darkCss.setAttribute('disabled', '');
+      }
+    }
+
+    setTimeout(function() {
+      // 设置代码块组件样式
+      document.querySelectorAll('.markdown-body pre').forEach((pre) => {
+        var cls = Fluid.utils.getBackgroundLightness(pre) >= 0 ? 'code-widget-light' : 'code-widget-dark';
+        var widget = pre.querySelector('.code-widget-light, .code-widget-dark');
+        if (widget) {
+          widget.classList.remove('code-widget-light', 'code-widget-dark');
+          widget.classList.add(cls);
+        }
+      });
+    }, 200);
+  }
+
+  function setApplications(schema) {
+    // 设置 remark42 评论主题
+    if (window.REMARK42) {
+      window.REMARK42.changeTheme(schema);
+    }
+
+    // 设置 cusdis 评论主题
+    if (window.CUSDIS) {
+      window.CUSDIS.setTheme(schema);
+    }
+
+    // 设置 utterances 评论主题
+    var utterances = document.querySelector('.utterances-frame');
+    if (utterances) {
+      var utterancesTheme = schema === 'dark' ? window.UtterancesThemeDark : window.UtterancesThemeLight;
+      const message = {
+        type : 'set-theme',
+        theme: utterancesTheme
+      };
+      utterances.contentWindow.postMessage(message, 'https://utteranc.es');
+    }
+
+    // 设置 giscus 评论主题
+    var giscus = document.querySelector('iframe.giscus-frame');
+    if (giscus) {
+      var giscusTheme = schema === 'dark' ? window.GiscusThemeDark : window.GiscusThemeLight;
+      const message = {
+        setConfig: {
+          theme: giscusTheme,
+        }
+      };
+      // giscus.style.cssText += 'color-scheme: normal;';
+      giscus.contentWindow.postMessage({ 'giscus': message }, 'https://giscus.app');
+    }
+  }
+
+  // 当页面加载时，将显示模式设置为 localStorage 中自定义的值（如果有的话）
+  applyCustomColorSchemaSettings();
+
+  Fluid.utils.waitElementLoaded(colorToggleIconSelector, function() {
+    applyCustomColorSchemaSettings();
+    var button = document.querySelector(colorToggleButtonSelector);
+    if (button) {
+      // 当用户点击切换按钮时，获得新的显示模式、写入 localStorage、并在页面上生效
+      button.addEventListener('click', function() {
+        applyCustomColorSchemaSettings(toggleCustomColorSchema());
+      });
+      var icon = document.querySelector(colorToggleIconSelector);
+      if (icon) {
+        // 光标悬停在按钮上时，切换图标
+        button.addEventListener('mouseenter', function() {
+          var current = icon.getAttribute('data');
+          icon.classList.replace(getIconClass(invertColorSchemaObj[current]), getIconClass(current));
+        });
+        button.addEventListener('mouseleave', function() {
+          var current = icon.getAttribute('data');
+          icon.classList.replace(getIconClass(current), getIconClass(invertColorSchemaObj[current]));
+        });
+      }
+    }
+  });
+
+  Fluid.utils.waitElementLoaded(iframeSelector, function() {
+    applyCustomColorSchemaSettings();
+  });
+  
+})(window, document);
+;
+/* global Fluid */
 
 HTMLElement.prototype.wrap = function(wrapper) {
   this.parentNode.insertBefore(wrapper, this);
@@ -95,892 +539,542 @@ HTMLElement.prototype.wrap = function(wrapper) {
   wrapper.appendChild(this);
 };
 
-(function() {
-  const onPageLoaded = () => document.dispatchEvent(
-    new Event('page:loaded', {
-      bubbles: true
-    })
-  );
+Fluid.events = {
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('readystatechange', onPageLoaded, { once: true });
-  } else {
-    onPageLoaded();
-  }
-  document.addEventListener('pjax:success', onPageLoaded);
-})();
-
-NexT.utils = {
-
-  registerExtURL() {
-    document.querySelectorAll('span.exturl').forEach(element => {
-      const link = document.createElement('a');
-      // https://stackoverflow.com/questions/30106476/using-javascripts-atob-to-decode-base64-doesnt-properly-decode-utf-8-strings
-      link.href = decodeURIComponent(atob(element.dataset.url).split('').map(c => {
-        return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
-      }).join(''));
-      link.rel = 'noopener external nofollow noreferrer';
-      link.target = '_blank';
-      link.className = element.className;
-      link.title = element.title;
-      link.innerHTML = element.innerHTML;
-      element.parentNode.replaceChild(link, element);
-    });
-  },
-
-  registerCopyButton(target, element, code = '') {
-    // One-click copy code support.
-    target.insertAdjacentHTML('beforeend', '<div class="copy-btn"><i class="fa fa-copy fa-fw"></i></div>');
-    const button = target.querySelector('.copy-btn');
-    button.addEventListener('click', () => {
-      if (!code) {
-        const lines = element.querySelector('.code') || element.querySelector('code');
-        code = lines.innerText;
-      }
-      if (navigator.clipboard) {
-        // https://caniuse.com/mdn-api_clipboard_writetext
-        navigator.clipboard.writeText(code).then(() => {
-          button.querySelector('i').className = 'fa fa-check-circle fa-fw';
-        }, () => {
-          button.querySelector('i').className = 'fa fa-times-circle fa-fw';
-        });
+  registerNavbarEvent: function() {
+    var navbar = jQuery('#navbar');
+    if (navbar.length === 0) {
+      return;
+    }
+    var submenu = jQuery('#navbar .dropdown-menu');
+    if (navbar.offset().top > 0) {
+      navbar.removeClass('navbar-dark');
+      submenu.removeClass('navbar-dark');
+    }
+    Fluid.utils.listenScroll(function() {
+      navbar[navbar.offset().top > 50 ? 'addClass' : 'removeClass']('top-nav-collapse');
+      submenu[navbar.offset().top > 50 ? 'addClass' : 'removeClass']('dropdown-collapse');
+      if (navbar.offset().top > 0) {
+        navbar.removeClass('navbar-dark');
+        submenu.removeClass('navbar-dark');
       } else {
-        const ta = document.createElement('textarea');
-        ta.style.top = window.scrollY + 'px'; // Prevent page scrolling
-        ta.style.position = 'absolute';
-        ta.style.opacity = '0';
-        ta.readOnly = true;
-        ta.value = code;
-        document.body.append(ta);
-        ta.select();
-        ta.setSelectionRange(0, code.length);
-        ta.readOnly = false;
-        const result = document.execCommand('copy');
-        button.querySelector('i').className = result ? 'fa fa-check-circle fa-fw' : 'fa fa-times-circle fa-fw';
-        ta.blur(); // For iOS
-        button.blur();
-        document.body.removeChild(ta);
+        navbar.addClass('navbar-dark');
+        submenu.removeClass('navbar-dark');
       }
     });
-    // If copycode.style is not mac, element is larger than target
-    // So we need to accept both of them as parameters
-    element.addEventListener('mouseleave', () => {
-      setTimeout(() => {
-        button.querySelector('i').className = 'fa fa-copy fa-fw';
-      }, 300);
+    jQuery('#navbar-toggler-btn').on('click', function() {
+      jQuery('.animated-icon').toggleClass('open');
+      jQuery('#navbar').toggleClass('navbar-col-show');
     });
   },
 
-  registerCodeblock(element) {
-    const inited = !!element;
-    let figure;
-    if (CONFIG.hljswrap) {
-      figure = (inited ? element : document).querySelectorAll('figure.highlight');
-    } else {
-      figure = document.querySelectorAll('pre');
+  registerParallaxEvent: function() {
+    var ph = jQuery('#banner[parallax="true"]');
+    if (ph.length === 0) {
+      return;
     }
-    figure.forEach(element => {
-      // Skip pre > .mermaid for folding and copy button
-      if (element.querySelector('.mermaid')) return;
-      if (!inited) {
-        let span = element.querySelectorAll('.code .line span');
-        if (span.length === 0) {
-          // Hljs without line_number and wrap
-          span = element.querySelectorAll('code.highlight span');
-        }
-        span.forEach(s => {
-          s.classList.forEach(name => {
-            s.classList.replace(name, `hljs-${name}`);
-          });
-        });
-      }
-      const height = parseInt(window.getComputedStyle(element).height, 10);
-      const needFold = CONFIG.fold.enable && (height > CONFIG.fold.height);
-      if (!needFold && !CONFIG.copycode.enable) return;
-      let target;
-      if (CONFIG.hljswrap && CONFIG.copycode.style === 'mac') {
-        target = element;
-      } else {
-        let box = element.querySelector('.code-container');
-        if (!box) {
-          // https://github.com/next-theme/hexo-theme-next/issues/98
-          // https://github.com/next-theme/hexo-theme-next/pull/508
-          const container = element.querySelector('.table-container') || element;
-          box = document.createElement('div');
-          box.className = 'code-container';
-          container.wrap(box);
-
-          // add "notranslate" to prevent Google Translate from translating it, which also completely messes up the layout
-          box.classList.add('notranslate');
-        }
-        target = box;
-      }
-      if (needFold && !target.classList.contains('unfold')) {
-        target.classList.add('highlight-fold');
-        target.insertAdjacentHTML('beforeend', '<div class="fold-cover"></div><div class="expand-btn"><i class="fa fa-angle-down fa-fw"></i></div>');
-        target.querySelector('.expand-btn').addEventListener('click', () => {
-          target.classList.remove('highlight-fold');
-          target.classList.add('unfold');
-        });
-      }
-      if (!inited && CONFIG.copycode.enable) {
-        this.registerCopyButton(target, element);
-      }
-    });
-  },
-
-  wrapTableWithBox() {
-    document.querySelectorAll('table').forEach(element => {
-      const box = document.createElement('div');
-      box.className = 'table-container';
-      element.wrap(box);
-    });
-  },
-
-  registerVideoIframe() {
-    document.querySelectorAll('iframe').forEach(element => {
-      const supported = [
-        'www.youtube.com',
-        'player.vimeo.com',
-        'player.youku.com',
-        'player.bilibili.com',
-        'www.tudou.com'
-      ].some(host => element.src.includes(host));
-      if (supported && !element.parentNode.matches('.video-container')) {
-        const box = document.createElement('div');
-        box.className = 'video-container';
-        element.wrap(box);
-        const width = Number(element.width);
-        const height = Number(element.height);
-        if (width && height) {
-          box.style.paddingTop = (height / width * 100) + '%';
-        }
-      }
-    });
-  },
-
-  updateActiveNav() {
-    if (!Array.isArray(this.sections)) return;
-    let index = this.sections.findIndex(element => {
-      return element && element.getBoundingClientRect().top > 10;
-    });
-    if (index === -1) {
-      index = this.sections.length - 1;
-    } else if (index > 0) {
-      index--;
+    var board = jQuery('#board');
+    if (board.length === 0) {
+      return;
     }
-    this.activateNavByIndex(index);
-  },
-
-  registerScrollPercent() {
-    const backToTop = document.querySelector('.back-to-top');
-    const readingProgressBar = document.querySelector('.reading-progress-bar');
-    // For init back to top in sidebar if page was scrolled after page refresh.
-    window.addEventListener('scroll', () => {
-      if (backToTop || readingProgressBar) {
-        const contentHeight = document.body.scrollHeight - window.innerHeight;
-        const scrollPercent = contentHeight > 0 ? Math.min(100 * window.scrollY / contentHeight, 100) : 0;
-        if (backToTop) {
-          backToTop.classList.toggle('back-to-top-on', Math.round(scrollPercent) >= 5);
-          backToTop.querySelector('span').innerText = Math.round(scrollPercent) + '%';
-        }
-        if (readingProgressBar) {
-          readingProgressBar.style.setProperty('--progress', scrollPercent.toFixed(2) + '%');
-        }
+    var parallax = function() {
+      var pxv = jQuery(window).scrollTop() / 5;
+      var offset = parseInt(board.css('margin-top'), 10);
+      var max = 96 + offset;
+      if (pxv > max) {
+        pxv = max;
       }
-      this.updateActiveNav();
-    }, { passive: true });
-
-    backToTop && backToTop.addEventListener('click', () => {
-      window.anime({
-        targets  : document.scrollingElement,
-        duration : 500,
-        easing   : 'linear',
-        scrollTop: 0
+      ph.css({
+        transform: 'translate3d(0,' + pxv + 'px,0)'
       });
-    });
-  },
-
-  /**
-   * Tabs tag listener (without twitter bootstrap).
-   */
-  registerTabsTag() {
-    // Binding `nav-tabs` & `tab-content` by real time permalink changing.
-    document.querySelectorAll('.tabs ul.nav-tabs .tab').forEach(element => {
-      element.addEventListener('click', event => {
-        event.preventDefault();
-        // Prevent selected tab to select again.
-        if (element.classList.contains('active')) return;
-        const nav = element.parentNode;
-        // Get the height of `tab-pane` which is activated before, and set it as the height of `tab-content` with extra margin / paddings.
-        const tabContent = nav.nextElementSibling;
-        tabContent.style.overflow = 'hidden';
-        tabContent.style.transition = 'height 1s';
-        // Comment system selection tab does not contain .active class.
-        const activeTab = tabContent.querySelector('.active') || tabContent.firstElementChild;
-        // Hight might be `auto`.
-        const prevHeight = parseInt(window.getComputedStyle(activeTab).height, 10) || 0;
-        const paddingTop = parseInt(window.getComputedStyle(activeTab).paddingTop, 10);
-        const marginBottom = parseInt(window.getComputedStyle(activeTab.firstElementChild).marginBottom, 10);
-        tabContent.style.height = prevHeight + paddingTop + marginBottom + 'px';
-        // Add & Remove active class on `nav-tabs` & `tab-content`.
-        [...nav.children].forEach(target => {
-          target.classList.toggle('active', target === element);
+      var sideCol = jQuery('.side-col');
+      if (sideCol) {
+        sideCol.css({
+          'padding-top': pxv + 'px'
         });
-        // https://stackoverflow.com/questions/20306204/using-queryselector-with-ids-that-are-numbers
-        const tActive = document.getElementById(element.querySelector('a').getAttribute('href').replace('#', ''));
-        [...tActive.parentNode.children].forEach(target => {
-          target.classList.toggle('active', target === tActive);
-        });
-        // Trigger event
-        tActive.dispatchEvent(new Event('tabs:click', {
-          bubbles: true
-        }));
-        // Get the height of `tab-pane` which is activated now.
-        const hasScrollBar = document.body.scrollHeight > (window.innerHeight || document.documentElement.clientHeight);
-        const currHeight = parseInt(window.getComputedStyle(tabContent.querySelector('.active')).height, 10);
-        // Reset the height of `tab-content` and see the animation.
-        tabContent.style.height = currHeight + paddingTop + marginBottom + 'px';
-        // Change the height of `tab-content` may cause scrollbar show / disappear, which may result in the change of the `tab-pane`'s height
-        setTimeout(() => {
-          if ((document.body.scrollHeight > (window.innerHeight || document.documentElement.clientHeight)) !== hasScrollBar) {
-            tabContent.style.transition = 'height 0.3s linear';
-            // After the animation, we need reset the height of `tab-content` again.
-            const currHeightAfterScrollBarChange = parseInt(window.getComputedStyle(tabContent.querySelector('.active')).height, 10);
-            tabContent.style.height = currHeightAfterScrollBarChange + paddingTop + marginBottom + 'px';
-          }
-          // Remove all the inline styles, and let the height be adaptive again.
-          setTimeout(() => {
-            tabContent.style.transition = '';
-            tabContent.style.height = '';
-          }, 250);
-        }, 1000);
-        if (!CONFIG.stickytabs) return;
-        const offset = nav.parentNode.getBoundingClientRect().top + window.scrollY + 10;
-        window.anime({
-          targets  : document.scrollingElement,
-          duration : 500,
-          easing   : 'linear',
-          scrollTop: offset
-        });
-      });
-    });
-
-    window.dispatchEvent(new Event('tabs:register'));
-  },
-
-  registerCanIUseTag() {
-    // Get responsive height passed from iframe.
-    window.addEventListener('message', ({ data }) => {
-      if (typeof data === 'string' && data.includes('ciu_embed')) {
-        const featureID = data.split(':')[1];
-        const height = data.split(':')[2];
-        document.querySelector(`iframe[data-feature=${featureID}]`).style.height = parseInt(height, 10) + 5 + 'px';
       }
-    }, false);
-  },
-
-  registerActiveMenuItem() {
-    document.querySelectorAll('.menu-item a[href]').forEach(target => {
-      const isSamePath = target.pathname === location.pathname || target.pathname === location.pathname.replace('index.html', '');
-      const isSubPath = !CONFIG.root.startsWith(target.pathname) && location.pathname.startsWith(target.pathname);
-      target.classList.toggle('menu-item-active', target.hostname === location.hostname && (isSamePath || isSubPath));
-    });
-  },
-
-  registerLangSelect() {
-    const selects = document.querySelectorAll('.lang-select');
-    selects.forEach(sel => {
-      sel.value = CONFIG.page.lang;
-      sel.addEventListener('change', () => {
-        const target = sel.options[sel.selectedIndex];
-        document.querySelectorAll('.lang-select-label span').forEach(span => {
-          span.innerText = target.text;
-        });
-        // Disable Pjax to force refresh translation of menu item
-        window.location.href = target.dataset.href;
-      });
-    });
-  },
-
-  registerSidebarTOC() {
-    this.sections = [...document.querySelectorAll('.post-toc:not(.placeholder-toc) li a.nav-link')].map(element => {
-      const target = document.getElementById(decodeURI(element.getAttribute('href')).replace('#', ''));
-      // TOC item animation navigate.
-      element.addEventListener('click', event => {
-        event.preventDefault();
-        const offset = target.getBoundingClientRect().top + window.scrollY;
-        window.anime({
-          targets  : document.scrollingElement,
-          duration : 500,
-          easing   : 'linear',
-          scrollTop: offset,
-          complete : () => {
-            history.pushState(null, document.title, element.href);
-          }
-        });
-      });
-      return target;
-    });
-    this.updateActiveNav();
-  },
-
-  registerPostReward() {
-    const button = document.querySelector('.reward-container button');
-    if (!button) return;
-    button.addEventListener('click', () => {
-      document.querySelector('.post-reward').classList.toggle('active');
-    });
-  },
-
-  activateNavByIndex(index) {
-    const nav = document.querySelector('.post-toc:not(.placeholder-toc) .nav');
-    if (!nav) return;
-
-    const navItemList = nav.querySelectorAll('.nav-item');
-    const target = navItemList[index];
-    if (!target || target.classList.contains('active-current')) return;
-
-    const singleHeight = navItemList[navItemList.length - 1].offsetHeight;
-
-    nav.querySelectorAll('.active').forEach(navItem => {
-      navItem.classList.remove('active', 'active-current');
-    });
-    target.classList.add('active', 'active-current');
-
-    let activateEle = target.querySelector('.nav-child') || target.parentElement;
-    let navChildHeight = 0;
-
-    while (nav.contains(activateEle)) {
-      if (activateEle.classList.contains('nav-item')) {
-        activateEle.classList.add('active');
-      } else { // .nav-child or .nav
-        // scrollHeight isn't reliable for transitioning child items.
-        // The last nav-item in a list has a margin-bottom of 5px.
-        navChildHeight += (singleHeight * activateEle.childElementCount) + 5;
-        activateEle.style.setProperty('--height', `${navChildHeight}px`);
-      }
-      activateEle = activateEle.parentElement;
-    }
-
-    // Scrolling to center active TOC element if TOC content is taller then viewport.
-    const tocElement = document.querySelector(CONFIG.scheme === 'Pisces' || CONFIG.scheme === 'Gemini' ? '.sidebar-panel-container' : '.sidebar');
-    if (!document.querySelector('.sidebar-toc-active')) return;
-    window.anime({
-      targets  : tocElement,
-      duration : 200,
-      easing   : 'linear',
-      scrollTop: tocElement.scrollTop - (tocElement.offsetHeight / 2) + target.getBoundingClientRect().top - tocElement.getBoundingClientRect().top
-    });
-  },
-
-  updateSidebarPosition() {
-    if (window.innerWidth < 1200 || CONFIG.scheme === 'Pisces' || CONFIG.scheme === 'Gemini') return;
-    // Expand sidebar on post detail page by default, when post has a toc.
-    const hasTOC = document.querySelector('.post-toc:not(.placeholder-toc)');
-    let display = CONFIG.page.sidebar;
-    if (typeof display !== 'boolean') {
-      // There's no definition sidebar in the page front-matter.
-      display = CONFIG.sidebar.display === 'always' || (CONFIG.sidebar.display === 'post' && hasTOC);
-    }
-    if (display) {
-      window.dispatchEvent(new Event('sidebar:show'));
-    }
-  },
-
-  activateSidebarPanel(index) {
-    const sidebar = document.querySelector('.sidebar-inner');
-    const activeClassNames = ['sidebar-toc-active', 'sidebar-overview-active'];
-    if (sidebar.classList.contains(activeClassNames[index])) return;
-
-    const panelContainer = sidebar.querySelector('.sidebar-panel-container');
-    const tocPanel = panelContainer.firstElementChild;
-    const overviewPanel = panelContainer.lastElementChild;
-
-    let postTOCHeight = tocPanel.scrollHeight;
-    // For TOC activation, try to use the animated TOC height
-    if (index === 0) {
-      const nav = tocPanel.querySelector('.nav');
-      if (nav) {
-        postTOCHeight = parseInt(nav.style.getPropertyValue('--height'), 10);
-      }
-    }
-    const panelHeights = [
-      postTOCHeight,
-      overviewPanel.scrollHeight
-    ];
-    panelContainer.style.setProperty('--inactive-panel-height', `${panelHeights[1 - index]}px`);
-    panelContainer.style.setProperty('--active-panel-height', `${panelHeights[index]}px`);
-
-    sidebar.classList.replace(activeClassNames[1 - index], activeClassNames[index]);
-  },
-
-  updateFooterPosition() {
-    if (CONFIG.scheme === 'Pisces' || CONFIG.scheme === 'Gemini') return;
-    function updateFooterPosition() {
-      const footer = document.querySelector('.footer');
-      const containerHeight = document.querySelector('.main').offsetHeight + footer.offsetHeight;
-      footer.classList.toggle('footer-fixed', containerHeight <= window.innerHeight);
-    }
-
-    updateFooterPosition();
-    window.addEventListener('resize', updateFooterPosition);
-    window.addEventListener('scroll', updateFooterPosition, { passive: true });
-  },
-
-  getScript(src, options = {}, legacyCondition) {
-    if (typeof options === 'function') {
-      return this.getScript(src, {
-        condition: legacyCondition
-      }).then(options);
-    }
-    const {
-      condition = false,
-      attributes: {
-        id = '',
-        async = false,
-        defer = false,
-        crossOrigin = '',
-        dataset = {},
-        ...otherAttributes
-      } = {},
-      parentNode = null
-    } = options;
-    return new Promise((resolve, reject) => {
-      if (condition) {
-        resolve();
-      } else {
-        const script = document.createElement('script');
-
-        if (id) script.id = id;
-        if (crossOrigin) script.crossOrigin = crossOrigin;
-        script.async = async;
-        script.defer = defer;
-        Object.assign(script.dataset, dataset);
-        Object.entries(otherAttributes).forEach(([name, value]) => {
-          script.setAttribute(name, String(value));
-        });
-
-        script.onload = resolve;
-        script.onerror = reject;
-
-        if (typeof src === 'object') {
-          const { url, integrity } = src;
-          script.src = url;
-          if (integrity) {
-            script.integrity = integrity;
-            script.crossOrigin = 'anonymous';
-          }
-        } else {
-          script.src = src;
-        }
-        (parentNode || document.head).appendChild(script);
-      }
-    });
-  },
-
-  loadComments(selector, legacyCallback) {
-    if (legacyCallback) {
-      return this.loadComments(selector).then(legacyCallback);
-    }
-    return new Promise(resolve => {
-      const element = document.querySelector(selector);
-      if (!CONFIG.comments.lazyload || !element) {
-        resolve();
-        return;
-      }
-      const intersectionObserver = new IntersectionObserver((entries, observer) => {
-        const entry = entries[0];
-        if (!entry.isIntersecting) return;
-
-        resolve();
-        observer.disconnect();
-      });
-      intersectionObserver.observe(element);
-    });
-  },
-
-  debounce(func, wait) {
-    let timeout;
-    return function(...args) {
-      const context = this;
-      clearTimeout(timeout);
-      timeout = setTimeout(() => func.apply(context, args), wait);
     };
+    Fluid.utils.listenScroll(parallax);
+  },
+
+  registerScrollDownArrowEvent: function() {
+    var scrollbar = jQuery('.scroll-down-bar');
+    if (scrollbar.length === 0) {
+      return;
+    }
+    scrollbar.on('click', function() {
+      Fluid.utils.scrollToElement('#board', -jQuery('#navbar').height());
+    });
+  },
+
+  registerScrollTopArrowEvent: function() {
+    var topArrow = jQuery('#scroll-top-button');
+    if (topArrow.length === 0) {
+      return;
+    }
+    var board = jQuery('#board');
+    if (board.length === 0) {
+      return;
+    }
+    var posDisplay = false;
+    var scrollDisplay = false;
+    // Position
+    var setTopArrowPos = function() {
+      var boardRight = board[0].getClientRects()[0].right;
+      var bodyWidth = document.body.offsetWidth;
+      var right = bodyWidth - boardRight;
+      posDisplay = right >= 50;
+      topArrow.css({
+        'bottom': posDisplay && scrollDisplay ? '20px' : '-60px',
+        'right' : right - 64 + 'px'
+      });
+    };
+    setTopArrowPos();
+    jQuery(window).resize(setTopArrowPos);
+    // Display
+    var headerHeight = board.offset().top;
+    Fluid.utils.listenScroll(function() {
+      var scrollHeight = document.body.scrollTop + document.documentElement.scrollTop;
+      scrollDisplay = scrollHeight >= headerHeight;
+      topArrow.css({
+        'bottom': posDisplay && scrollDisplay ? '20px' : '-60px'
+      });
+    });
+    // Click
+    topArrow.on('click', function() {
+      jQuery('body,html').animate({
+        scrollTop: 0,
+        easing   : 'swing'
+      });
+    });
+  },
+
+  registerImageLoadedEvent: function() {
+    if (!('NProgress' in window)) { return; }
+
+    var bg = document.getElementById('banner');
+    if (bg) {
+      var src = bg.style.backgroundImage;
+      var url = src.match(/\((.*?)\)/)[1].replace(/(['"])/g, '');
+      var img = new Image();
+      img.onload = function() {
+        window.NProgress && window.NProgress.status !== null && window.NProgress.inc(0.2);
+      };
+      img.src = url;
+      if (img.complete) { img.onload(); }
+    }
+
+    var notLazyImages = jQuery('main img:not([lazyload])');
+    var total = notLazyImages.length;
+    for (const img of notLazyImages) {
+      const old = img.onload;
+      img.onload = function() {
+        old && old();
+        window.NProgress && window.NProgress.status !== null && window.NProgress.inc(0.5 / total);
+      };
+      if (img.complete) { img.onload(); }
+    }
+  },
+
+  registerRefreshCallback: function(callback) {
+    if (!Array.isArray(Fluid.events._refreshCallbacks)) {
+      Fluid.events._refreshCallbacks = [];
+    }
+    Fluid.events._refreshCallbacks.push(callback);
+  },
+
+  refresh: function() {
+    if (Array.isArray(Fluid.events._refreshCallbacks)) {
+      for (var callback of Fluid.events._refreshCallbacks) {
+        if (callback instanceof Function) {
+          callback();
+        }
+      }
+    }
+  },
+
+  billboard: function() {
+    if (!('console' in window)) {
+      return;
+    }
+    // eslint-disable-next-line no-console
+    console.log(`
+-------------------------------------------------
+|                                               |
+|      ________  __            _        __      |
+|     |_   __  |[  |          (_)      |  ]     |
+|       | |_ \\_| | | __   _   __   .--.| |      |
+|       |  _|    | |[  | | | [  |/ /'\`\\' |      |
+|      _| |_     | | | \\_/ |, | || \\__/  |      |
+|     |_____|   [___]'.__.'_/[___]'.__.;__]     |
+|                                               |
+|            Powered by Hexo x Fluid            |
+| https://github.com/fluid-dev/hexo-theme-fluid |
+|                                               |
+-------------------------------------------------
+    `);
   }
 };
 ;
-/* global NexT, CONFIG */
+/* global Fluid, CONFIG */
 
-NexT.motion = {};
+HTMLElement.prototype.wrap = function(wrapper) {
+  this.parentNode.insertBefore(wrapper, this);
+  this.parentNode.removeChild(this);
+  wrapper.appendChild(this);
+};
 
-NexT.motion.integrator = {
-  queue: [],
-  init() {
-    this.queue = [];
-    return this;
+Fluid.plugins = {
+
+  typing: function(text) {
+    if (!('Typed' in window)) { return; }
+
+    var typed = new window.Typed('#subtitle', {
+      strings: [
+        '  ',
+        text
+      ],
+      cursorChar: CONFIG.typing.cursorChar,
+      typeSpeed : CONFIG.typing.typeSpeed,
+      loop      : CONFIG.typing.loop
+    });
+    typed.stop();
+    var subtitle = document.getElementById('subtitle');
+    if (subtitle) {
+      subtitle.innerText = '';
+    }
+    jQuery(document).ready(function() {
+      typed.start();
+    });
   },
-  add(fn) {
-    const sequence = fn();
-    this.queue.push(sequence);
-    return this;
+
+  fancyBox: function(selector) {
+    if (!CONFIG.image_zoom.enable || !('fancybox' in jQuery)) { return; }
+
+    jQuery(selector || '.markdown-body :not(a) > img, .markdown-body > img').each(function() {
+      var $image = jQuery(this);
+      var imageUrl = $image.attr('data-src') || $image.attr('src') || '';
+      if (CONFIG.image_zoom.img_url_replace) {
+        var rep = CONFIG.image_zoom.img_url_replace;
+        var r1 = rep[0] || '';
+        var r2 = rep[1] || '';
+        if (r1) {
+          if (/^re:/.test(r1)) {
+            r1 = r1.replace(/^re:/, '');
+            var reg = new RegExp(r1, 'gi');
+            imageUrl = imageUrl.replace(reg, r2);
+          } else {
+            imageUrl = imageUrl.replace(r1, r2);
+          }
+        }
+      }
+      var $imageWrap = $image.wrap(`
+        <a class="fancybox fancybox.image" href="${imageUrl}"
+          itemscope itemtype="http://schema.org/ImageObject" itemprop="url"></a>`
+      ).parent('a');
+      if ($imageWrap.length !== 0) {
+        if ($image.is('.group-image-container img')) {
+          $imageWrap.attr('data-fancybox', 'group').attr('rel', 'group');
+        } else {
+          $imageWrap.attr('data-fancybox', 'default').attr('rel', 'default');
+        }
+
+        var imageTitle = $image.attr('title') || $image.attr('alt');
+        if (imageTitle) {
+          $imageWrap.attr('title', imageTitle).attr('data-caption', imageTitle);
+        }
+      }
+    });
+
+    jQuery.fancybox.defaults.hash = false;
+    jQuery('.fancybox').fancybox({
+      loop   : true,
+      helpers: {
+        overlay: {
+          locked: false
+        }
+      }
+    });
   },
-  bootstrap() {
-    if (!CONFIG.motion.async) this.queue = [this.queue.flat()];
-    this.queue.forEach(sequence => {
-      const timeline = window.anime.timeline({
-        duration: 200,
-        easing  : 'linear'
-      });
-      sequence.forEach(item => {
-        if (item.deltaT) timeline.add(item, item.deltaT);
-        else timeline.add(item);
-      });
+
+  imageCaption: function(selector) {
+    if (!CONFIG.image_caption.enable) { return; }
+
+    jQuery(selector || `.markdown-body > p > img, .markdown-body > figure > img,
+      .markdown-body > p > a.fancybox, .markdown-body > figure > a.fancybox`).each(function() {
+      var $target = jQuery(this);
+      var $figcaption = $target.next('figcaption');
+      if ($figcaption.length !== 0) {
+        $figcaption.addClass('image-caption');
+      } else {
+        var imageTitle = $target.attr('title') || $target.attr('alt');
+        if (imageTitle) {
+          $target.after(`<figcaption aria-hidden="true" class="image-caption">${imageTitle}</figcaption>`);
+        }
+      }
+    });
+  },
+
+  codeWidget() {
+    var enableLang = CONFIG.code_language.enable && CONFIG.code_language.default;
+    var enableCopy = CONFIG.copy_btn && 'ClipboardJS' in window;
+    if (!enableLang && !enableCopy) {
+      return;
+    }
+
+    function getBgClass(ele) {
+      return Fluid.utils.getBackgroundLightness(ele) >= 0 ? 'code-widget-light' : 'code-widget-dark';
+    }
+
+    var copyTmpl = '';
+    copyTmpl += '<div class="code-widget">';
+    copyTmpl += 'LANG';
+    copyTmpl += '</div>';
+    jQuery('.markdown-body pre').each(function() {
+      var $pre = jQuery(this);
+      if ($pre.find('code.mermaid').length > 0) {
+        return;
+      }
+      if ($pre.find('span.line').length > 0) {
+        return;
+      }
+
+      var lang = '';
+
+      if (enableLang) {
+        lang = CONFIG.code_language.default;
+        if ($pre[0].children.length > 0 && $pre[0].children[0].classList.length >= 2 && $pre.children().hasClass('hljs')) {
+          lang = $pre[0].children[0].classList[1];
+        } else if ($pre[0].getAttribute('data-language')) {
+          lang = $pre[0].getAttribute('data-language');
+        } else if ($pre.parent().hasClass('sourceCode') && $pre[0].children.length > 0 && $pre[0].children[0].classList.length >= 2) {
+          lang = $pre[0].children[0].classList[1];
+          $pre.parent().addClass('code-wrapper');
+        } else if ($pre.parent().hasClass('markdown-body') && $pre[0].classList.length === 0) {
+          $pre.wrap('<div class="code-wrapper"></div>');
+        }
+        lang = lang.toUpperCase().replace('NONE', CONFIG.code_language.default);
+      }
+      $pre.append(copyTmpl.replace('LANG', lang).replace('code-widget">',
+        getBgClass($pre[0]) + (enableCopy ? ' code-widget copy-btn" data-clipboard-snippet><i class="iconfont icon-copy"></i>' : ' code-widget">')));
+
+      if (enableCopy) {
+        var clipboard = new ClipboardJS('.copy-btn', {
+          target: function(trigger) {
+            var nodes = trigger.parentNode.childNodes;
+            for (var i = 0; i < nodes.length; i++) {
+              if (nodes[i].tagName === 'CODE') {
+                return nodes[i];
+              }
+            }
+          }
+        });
+        clipboard.on('success', function(e) {
+          e.clearSelection();
+          e.trigger.innerHTML = e.trigger.innerHTML.replace('icon-copy', 'icon-success');
+          setTimeout(function() {
+            e.trigger.innerHTML = e.trigger.innerHTML.replace('icon-success', 'icon-copy');
+          }, 2000);
+        });
+      }
     });
   }
 };
+;
+/* global Fluid, CONFIG */
 
-NexT.motion.middleWares = {
-  header() {
-    const sequence = [];
-
-    function getMistLineSettings(targets) {
-      sequence.push({
-        targets,
-        scaleX  : [0, 1],
-        duration: 500,
-        deltaT  : '-=200'
-      });
-    }
-
-    function pushToSequence(targets, sequenceQueue = false) {
-      sequence.push({
-        targets,
-        opacity: 1,
-        top    : 0,
-        deltaT : sequenceQueue ? '-=200' : '-=0'
-      });
-    }
-
-    pushToSequence('.column');
-    CONFIG.scheme === 'Mist' && getMistLineSettings('.logo-line');
-    CONFIG.scheme === 'Muse' && pushToSequence('.custom-logo-image');
-    pushToSequence('.site-title');
-    pushToSequence('.site-brand-container .toggle', true);
-    pushToSequence('.site-subtitle');
-    (CONFIG.scheme === 'Pisces' || CONFIG.scheme === 'Gemini') && pushToSequence('.custom-logo-image');
-
-    const menuItemTransition = CONFIG.motion.transition.menu_item;
-    if (menuItemTransition) {
-      document.querySelectorAll('.menu-item').forEach(targets => {
-        sequence.push({
-          targets,
-          complete: () => targets.classList.add('animated', menuItemTransition),
-          deltaT  : '-=200'
-        });
-      });
-    }
-
-    return sequence;
-  },
-
-  subMenu() {
-    const subMenuItem = document.querySelectorAll('.sub-menu .menu-item');
-    if (subMenuItem.length > 0) {
-      subMenuItem.forEach(element => {
-        element.classList.add('animated');
-      });
-    }
-    return [];
-  },
-
-  postList() {
-    const sequence = [];
-    const { post_block, post_header, post_body, coll_header } = CONFIG.motion.transition;
-
-    function animate(animation, elements) {
-      if (!animation) return;
-      elements.forEach(targets => {
-        sequence.push({
-          targets,
-          complete: () => targets.classList.add('animated', animation),
-          deltaT  : '-=100'
-        });
-      });
-    }
-
-    document.querySelectorAll('.post-block').forEach(targets => {
-      sequence.push({
-        targets,
-        complete: () => targets.classList.add('animated', post_block),
-        deltaT  : '-=100'
-      });
-      animate(coll_header, targets.querySelectorAll('.collection-header'));
-      animate(post_header, targets.querySelectorAll('.post-header'));
-      animate(post_body, targets.querySelectorAll('.post-body'));
-    });
-
-    animate(post_block, document.querySelectorAll('.pagination, .comments'));
-
-    return sequence;
-  },
-
-  sidebar() {
-    const sequence = [];
-    const sidebar = document.querySelectorAll('.sidebar-inner');
-    const sidebarTransition = CONFIG.motion.transition.sidebar;
-    // Only for desktop of Pisces | Gemini.
-    if (sidebarTransition && (CONFIG.scheme === 'Pisces' || CONFIG.scheme === 'Gemini') && window.innerWidth >= 992) {
-      sidebar.forEach(targets => {
-        sequence.push({
-          targets,
-          complete: () => targets.classList.add('animated', sidebarTransition),
-          deltaT  : '-=100'
-        });
-      });
-    }
-    return sequence;
-  },
-
-  footer() {
-    return [{
-      targets: document.querySelector('.footer'),
-      opacity: 1
-    }];
+(function(window, document) {
+  for (const each of document.querySelectorAll('img[lazyload]')) {
+    Fluid.utils.waitElementVisible(each, function() {
+      each.removeAttribute('srcset');
+      each.removeAttribute('lazyload');
+    }, CONFIG.lazyload.offset_factor);
   }
-};
+})(window, document);
 ;
 /* global CONFIG */
 
-document.addEventListener('DOMContentLoaded', () => {
+(function() {
+  // Modified from [hexo-generator-search](https://github.com/wzpan/hexo-generator-search)
+  function localSearchFunc(path, searchSelector, resultSelector) {
+    'use strict';
+    // 0x00. environment initialization
+    var $input = jQuery(searchSelector);
+    var $result = jQuery(resultSelector);
 
-  const isRight = CONFIG.sidebar.position === 'right';
-
-  const sidebarToggleMotion = {
-    mouse: {},
-    init() {
-      window.addEventListener('mousedown', this.mousedownHandler.bind(this));
-      window.addEventListener('mouseup', this.mouseupHandler.bind(this));
-      document.querySelector('.sidebar-dimmer').addEventListener('click', this.clickHandler.bind(this));
-      document.querySelector('.sidebar-toggle').addEventListener('click', this.clickHandler.bind(this));
-      window.addEventListener('sidebar:show', this.showSidebar);
-      window.addEventListener('sidebar:hide', this.hideSidebar);
-    },
-    mousedownHandler(event) {
-      this.mouse.X = event.pageX;
-      this.mouse.Y = event.pageY;
-    },
-    mouseupHandler(event) {
-      const deltaX = event.pageX - this.mouse.X;
-      const deltaY = event.pageY - this.mouse.Y;
-      const clickingBlankPart = Math.hypot(deltaX, deltaY) < 20 && event.target.matches('.main');
-      // Fancybox has z-index property, but medium-zoom does not, so the sidebar will overlay the zoomed image.
-      if (clickingBlankPart || event.target.matches('img.medium-zoom-image')) {
-        this.hideSidebar();
-      }
-    },
-    clickHandler() {
-      document.body.classList.contains('sidebar-active') ? this.hideSidebar() : this.showSidebar();
-    },
-    showSidebar() {
-      document.body.classList.add('sidebar-active');
-      const animateAction = isRight ? 'fadeInRight' : 'fadeInLeft';
-      document.querySelectorAll('.sidebar .animated').forEach((element, index) => {
-        element.style.animationDelay = (100 * index) + 'ms';
-        element.classList.remove(animateAction);
-        setTimeout(() => {
-          // Trigger a DOM reflow
-          element.classList.add(animateAction);
-        });
-      });
-    },
-    hideSidebar() {
-      document.body.classList.remove('sidebar-active');
+    if ($input.length === 0) {
+      // eslint-disable-next-line no-console
+      throw Error('No element selected by the searchSelector');
     }
-  };
-  sidebarToggleMotion.init();
-});
-;
-/* global NexT, CONFIG */
-
-NexT.boot = {};
-
-NexT.boot.registerEvents = function() {
-
-  NexT.utils.registerScrollPercent();
-  NexT.utils.registerCanIUseTag();
-  NexT.utils.updateFooterPosition();
-
-  // Mobile top menu bar.
-  document.querySelector('.site-nav-toggle .toggle').addEventListener('click', event => {
-    event.currentTarget.classList.toggle('toggle-close');
-    const siteNav = document.querySelector('.site-nav');
-    if (!siteNav) return;
-    siteNav.style.setProperty('--scroll-height', siteNav.scrollHeight + 'px');
-    document.body.classList.toggle('site-nav-on');
-  });
-
-  document.querySelectorAll('.sidebar-nav li').forEach((element, index) => {
-    element.addEventListener('click', () => {
-      NexT.utils.activateSidebarPanel(index);
-    });
-  });
-
-  window.addEventListener('hashchange', () => {
-    const tHash = location.hash;
-    if (tHash !== '' && !tHash.match(/%\S{2}/)) {
-      const target = document.querySelector(`.tabs ul.nav-tabs li a[href="${tHash}"]`);
-      target && target.click();
+    if ($result.length === 0) {
+      // eslint-disable-next-line no-console
+      throw Error('No element selected by the resultSelector');
     }
-  });
 
-  window.addEventListener('tabs:click', e => {
-    NexT.utils.registerCodeblock(e.target);
-  });
-};
+    if ($result.attr('class').indexOf('list-group-item') === -1) {
+      $result.html('<div class="m-auto text-center"><div class="spinner-border" role="status"><span class="sr-only">Loading...</span></div><br/>Loading...</div>');
+    }
 
-NexT.boot.refresh = function() {
+    jQuery.ajax({
+      // 0x01. load xml file
+      url     : path,
+      dataType: 'xml',
+      success : function(xmlResponse) {
+        // 0x02. parse xml file
+        var dataList = jQuery('entry', xmlResponse).map(function() {
+          return {
+            title  : jQuery('title', this).text(),
+            content: jQuery('content', this).text(),
+            url    : jQuery('url', this).text()
+          };
+        }).get();
 
-  /**
-   * Register JS handlers by condition option.
-   * Need to add config option in Front-End at 'scripts/helpers/next-config.js' file.
-   */
-  CONFIG.prism && window.Prism.highlightAll();
-  CONFIG.mediumzoom && window.mediumZoom('.post-body :not(a) > img, .post-body > img', {
-    background: 'var(--content-bg-color)'
-  });
-  CONFIG.lazyload && window.lozad('.post-body img').observe();
-  CONFIG.pangu && window.pangu.spacingPage();
-
-  CONFIG.exturl && NexT.utils.registerExtURL();
-  NexT.utils.wrapTableWithBox();
-  NexT.utils.registerCodeblock();
-  NexT.utils.registerTabsTag();
-  NexT.utils.registerActiveMenuItem();
-  NexT.utils.registerLangSelect();
-  NexT.utils.registerSidebarTOC();
-  NexT.utils.registerPostReward();
-  NexT.utils.registerVideoIframe();
-};
-
-NexT.boot.motion = function() {
-  // Define Motion Sequence & Bootstrap Motion.
-  if (CONFIG.motion.enable) {
-    NexT.motion.integrator
-      .add(NexT.motion.middleWares.header)
-      .add(NexT.motion.middleWares.sidebar)
-      .add(NexT.motion.middleWares.postList)
-      .add(NexT.motion.middleWares.footer)
-      .bootstrap();
-  }
-  NexT.utils.updateSidebarPosition();
-};
-
-document.addEventListener('DOMContentLoaded', () => {
-  NexT.boot.registerEvents();
-  NexT.boot.refresh();
-  NexT.boot.motion();
-});
-;
-/* global NexT, CONFIG, Pjax */
-
-const pjax = new Pjax({
-  selectors: [
-    'head title',
-    'meta[property="og:title"]',
-    'script[type="application/json"]',
-    // Precede .main-inner to prevent placeholder TOC changes asap
-    '.post-toc-wrap',
-    '.main-inner',
-    '.languages',
-    '.pjax'
-  ],
-  switches: {
-    '.post-toc-wrap'(oldWrap, newWrap) {
-      if (newWrap.querySelector('.post-toc')) {
-        Pjax.switches.outerHTML.call(this, oldWrap, newWrap);
-      } else {
-        const curTOC = oldWrap.querySelector('.post-toc');
-        if (curTOC) {
-          curTOC.classList.add('placeholder-toc');
+        if ($result.html().indexOf('list-group-item') === -1) {
+          $result.html('');
         }
-        this.onSwitch();
+
+        $input.on('input', function() {
+          // 0x03. parse query to keywords list
+          var content = $input.val();
+          var resultHTML = '';
+          var keywords = content.trim().toLowerCase().split(/[\s-]+/);
+          $result.html('');
+          if (content.trim().length <= 0) {
+            return $input.removeClass('invalid').removeClass('valid');
+          }
+          // 0x04. perform local searching
+          dataList.forEach(function(data) {
+            var isMatch = true;
+            if (!data.title || data.title.trim() === '') {
+              data.title = 'Untitled';
+            }
+            var orig_data_title = data.title.trim();
+            var data_title = orig_data_title.toLowerCase();
+            var orig_data_content = data.content.trim().replace(/<[^>]+>/g, '');
+            var data_content = orig_data_content.toLowerCase();
+            var data_url = data.url;
+            var index_title = -1;
+            var index_content = -1;
+            var first_occur = -1;
+            // Skip matching when content is included in search and content is empty
+            if (CONFIG.include_content_in_search && data_content === '') {
+              isMatch = false;
+            } else {
+              keywords.forEach(function (keyword, i) {
+                index_title = data_title.indexOf(keyword);
+                index_content = data_content.indexOf(keyword);
+
+                if (index_title < 0 && index_content < 0) {
+                  isMatch = false;
+                } else {
+                  if (index_content < 0) {
+                    index_content = 0;
+                  }
+                  if (i === 0) {
+                    first_occur = index_content;
+                  }
+                }
+              });
+            }
+            // 0x05. show search results
+            if (isMatch) {
+              resultHTML += '<a href=\'' + data_url + '\' class=\'list-group-item list-group-item-action font-weight-bolder search-list-title\'>' + orig_data_title + '</a>';
+              var content = orig_data_content;
+              if (first_occur >= 0) {
+                // cut out 100 characters
+                var start = first_occur - 20;
+                var end = first_occur + 80;
+
+                if (start < 0) {
+                  start = 0;
+                }
+
+                if (start === 0) {
+                  end = 100;
+                }
+
+                if (end > content.length) {
+                  end = content.length;
+                }
+
+                var match_content = content.substring(start, end);
+
+                // highlight all keywords
+                keywords.forEach(function(keyword) {
+                  var regS = new RegExp(keyword, 'gi');
+                  match_content = match_content.replace(regS, '<span class="search-word">' + keyword + '</span>');
+                });
+
+                resultHTML += '<p class=\'search-list-content\'>' + match_content + '...</p>';
+              }
+            }
+          });
+          if (resultHTML.indexOf('list-group-item') === -1) {
+            return $input.addClass('invalid').removeClass('valid');
+          }
+          $input.addClass('valid').removeClass('invalid');
+          $result.html(resultHTML);
+        });
       }
+    });
+  }
+
+  function localSearchReset(searchSelector, resultSelector) {
+    'use strict';
+    var $input = jQuery(searchSelector);
+    var $result = jQuery(resultSelector);
+
+    if ($input.length === 0) {
+      // eslint-disable-next-line no-console
+      throw Error('No element selected by the searchSelector');
     }
-  },
-  analytics: false,
-  cacheBust: false,
-  scrollTo : !CONFIG.bookmark.enable
-});
+    if ($result.length === 0) {
+      // eslint-disable-next-line no-console
+      throw Error('No element selected by the resultSelector');
+    }
 
-document.addEventListener('pjax:success', () => {
-  pjax.executeScripts(document.querySelectorAll('script[data-pjax]'));
-  NexT.boot.refresh();
-  // Define Motion Sequence & Bootstrap Motion.
-  if (CONFIG.motion.enable) {
-    NexT.motion.integrator
-      .init()
-      .add(NexT.motion.middleWares.subMenu)
-      // Add sidebar-post-related transition.
-      .add(NexT.motion.middleWares.sidebar)
-      .add(NexT.motion.middleWares.postList)
-      .bootstrap();
+    $input.val('').removeClass('invalid').removeClass('valid');
+    $result.html('');
   }
-  if (CONFIG.sidebar.display !== 'remove') {
-    const hasTOC = document.querySelector('.post-toc:not(.placeholder-toc)');
-    document.querySelector('.sidebar-inner').classList.toggle('sidebar-nav-active', hasTOC);
-    NexT.utils.activateSidebarPanel(hasTOC ? 0 : 1);
-    NexT.utils.updateSidebarPosition();
-  }
+
+  var modal = jQuery('#modalSearch');
+  var searchSelector = '#local-search-input';
+  var resultSelector = '#local-search-result';
+  modal.on('show.bs.modal', function() {
+    var path = CONFIG.search_path || '/local-search.xml';
+    localSearchFunc(path, searchSelector, resultSelector);
+  });
+  modal.on('shown.bs.modal', function() {
+    jQuery('#local-search-input').focus();
+  });
+  modal.on('hidden.bs.modal', function() {
+    localSearchReset(searchSelector, resultSelector);
+  });
+})();
+;
+/* global Fluid */
+
+Fluid.boot = {};
+
+Fluid.boot.registerEvents = function() {
+  Fluid.events.billboard();
+  Fluid.events.registerNavbarEvent();
+  Fluid.events.registerParallaxEvent();
+  Fluid.events.registerScrollDownArrowEvent();
+  Fluid.events.registerScrollTopArrowEvent();
+  Fluid.events.registerImageLoadedEvent();
+};
+
+Fluid.boot.refresh = function() {
+  Fluid.plugins.fancyBox();
+  Fluid.plugins.codeWidget();
+  Fluid.events.refresh();
+};
+
+document.addEventListener('DOMContentLoaded', function() {
+  Fluid.boot.registerEvents();
 });
 ;
-/* global NexT, CONFIG */
-
-document.addEventListener('page:loaded', () => {
-  if (!CONFIG.page.comments) return;
-
-  NexT.utils.loadComments('.utterances-container')
-    .then(() => NexT.utils.getScript('https://utteranc.es/client.js', {
-      attributes: {
-        async       : true,
-        crossOrigin : 'anonymous',
-        'repo'      : CONFIG.utterances.repo,
-        'issue-term': CONFIG.utterances.issue_term,
-        'theme'     : CONFIG.utterances.theme
-      },
-      parentNode: document.querySelector('.utterances-container')
-    }));
-});
-;
-$(document).ready(function() {
-	
-	categoryUnfold();
-	
-	function categoryUnfold() {
-		$(".category-list-link").filter(function() {
-			if($(this).siblings(".category-list-child").length > 0)
-				//$(this).parent().css("list-style", "circle");
-				$(this).parent().css("list-style-image","url('/assets/img/category-unfold-16x16.png')");
-				//console.log($(this).text());
-		});
-		
-		//点击含有子标签category-list-child的category-list-link标签时，不进行跳转
-		$(".category-list-link").filter(function() {
-			return $(this).siblings(".category-list-child").length > 0
-		}).attr("href", "javascript:void(0)");
-		
-		//含有子标签category-list-child的category-list-link标签将自动隐藏子标签
-		$(".category-list-link").filter(function() {
-			if($(this).siblings(".category-list-child").length > 0)
-				$(this).siblings(".category-list-child").hide();
-		});	
-		
-		//点击含有子标签category-list-child的category-list-link标签时，将隐藏子标签展开
-		$(".category-list-link").click(function() {
-			$(this).siblings(".category-list-child").slideToggle();
-		});
-	}
-});;
 (() => {
   'use strict';
 
