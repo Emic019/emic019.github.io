@@ -1,1079 +1,1247 @@
-/* global Fluid, CONFIG */
-
-window.requestAnimationFrame = window.requestAnimationFrame || window.webkitRequestAnimationFrame || window.mozRequestAnimationFrame;
-
-Fluid.utils = {
-
-  listenScroll: function(callback) {
-    var dbc = new Debouncer(callback);
-    window.addEventListener('scroll', dbc, false);
-    dbc.handleEvent();
-    return dbc;
-  },
-
-  unlistenScroll: function(callback) {
-    window.removeEventListener('scroll', callback);
-  },
-
-  listenDOMLoaded(callback) {
-    if (document.readyState !== 'loading') {
-      callback();
-    } else {
-      document.addEventListener('DOMContentLoaded', function () {
-        callback();
-      });
-    }
-  },
-
-  scrollToElement: function(target, offset) {
-    var of = jQuery(target).offset();
-    if (of) {
-      jQuery('html,body').animate({
-        scrollTop: of.top + (offset || 0),
-        easing   : 'swing'
-      });
-    }
-  },
-
-  elementVisible: function(element, offsetFactor) {
-    offsetFactor = offsetFactor && offsetFactor >= 0 ? offsetFactor : 0;
-    var rect = element.getBoundingClientRect();
-    const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
-    return (
-      (rect.top >= 0 && rect.top <= viewportHeight * (1 + offsetFactor) + rect.height / 2) ||
-      (rect.bottom >= 0 && rect.bottom <= viewportHeight * (1 + offsetFactor) + rect.height / 2)
-    );
-  },
-
-  waitElementVisible: function(selectorOrElement, callback, offsetFactor) {
-    var runningOnBrowser = typeof window !== 'undefined';
-    var isBot = (runningOnBrowser && !('onscroll' in window))
-      || (typeof navigator !== 'undefined' && /(gle|ing|ro|msn)bot|crawl|spider|yand|duckgo/i.test(navigator.userAgent));
-    if (!runningOnBrowser || isBot) {
-      return;
-    }
-
-    offsetFactor = offsetFactor && offsetFactor >= 0 ? offsetFactor : 0;
-
-    function waitInViewport(element) {
-      Fluid.utils.listenDOMLoaded(function() {
-        if (Fluid.utils.elementVisible(element, offsetFactor)) {
-          callback();
-          return;
+(() => {
+  const btfFn = {
+    debounce: (func, wait = 0, immediate = false) => {
+      let timeout
+      return (...args) => {
+        const later = () => {
+          timeout = null
+          if (!immediate) func(...args)
         }
-        if ('IntersectionObserver' in window) {
-          var io = new IntersectionObserver(function(entries, ob) {
-            if (entries[0].isIntersecting) {
-              callback();
-              ob.disconnect();
-            }
-          }, {
-            threshold : [0],
-            rootMargin: (window.innerHeight || document.documentElement.clientHeight) * offsetFactor + 'px'
-          });
-          io.observe(element);
-        } else {
-          var wrapper = Fluid.utils.listenScroll(function() {
-            if (Fluid.utils.elementVisible(element, offsetFactor)) {
-              Fluid.utils.unlistenScroll(wrapper);
-              callback();
-            }
-          });
-        }
-      });
-    }
+        const callNow = immediate && !timeout
+        clearTimeout(timeout)
+        timeout = setTimeout(later, wait)
+        if (callNow) func(...args)
+      }
+    },
 
-    if (typeof selectorOrElement === 'string') {
-      this.waitElementLoaded(selectorOrElement, function(element) {
-        waitInViewport(element);
-      });
-    } else {
-      waitInViewport(selectorOrElement);
-    }
-  },
+    throttle: function (func, wait, options = {}) {
+      let timeout, context, args
+      let previous = 0
 
-  waitElementLoaded: function(selector, callback) {
-    var runningOnBrowser = typeof window !== 'undefined';
-    var isBot = (runningOnBrowser && !('onscroll' in window))
-      || (typeof navigator !== 'undefined' && /(gle|ing|ro|msn)bot|crawl|spider|yand|duckgo/i.test(navigator.userAgent));
-    if (!runningOnBrowser || isBot) {
-      return;
-    }
+      const later = () => {
+        previous = options.leading === false ? 0 : new Date().getTime()
+        timeout = null
+        func.apply(context, args)
+        if (!timeout) context = args = null
+      }
 
-    if ('MutationObserver' in window) {
-      var mo = new MutationObserver(function(records, ob) {
-        var ele = document.querySelector(selector);
-        if (ele) {
-          callback(ele);
-          ob.disconnect();
-        }
-      });
-      mo.observe(document, { childList: true, subtree: true });
-    } else {
-      Fluid.utils.listenDOMLoaded(function() {
-        var waitLoop = function() {
-          var ele = document.querySelector(selector);
-          if (ele) {
-            callback(ele);
-          } else {
-            setTimeout(waitLoop, 100);
+      const throttled = (...params) => {
+        const now = new Date().getTime()
+        if (!previous && options.leading === false) previous = now
+        const remaining = wait - (now - previous)
+        context = this
+        args = params
+        if (remaining <= 0 || remaining > wait) {
+          if (timeout) {
+            clearTimeout(timeout)
+            timeout = null
           }
-        };
-        waitLoop();
-      });
-    }
-  },
-
-  createScript: function(url, onload) {
-    var s = document.createElement('script');
-    s.setAttribute('src', url);
-    s.setAttribute('type', 'text/javascript');
-    s.setAttribute('charset', 'UTF-8');
-    s.async = false;
-    if (typeof onload === 'function') {
-      if (window.attachEvent) {
-        s.onreadystatechange = function() {
-          var e = s.readyState;
-          if (e === 'loaded' || e === 'complete') {
-            s.onreadystatechange = null;
-            onload();
-          }
-        };
-      } else {
-        s.onload = onload;
-      }
-    }
-    var ss = document.getElementsByTagName('script');
-    var e = ss.length > 0 ? ss[ss.length - 1] : document.head || document.documentElement;
-    e.parentNode.insertBefore(s, e.nextSibling);
-  },
-
-  createCssLink: function(url) {
-    var l = document.createElement('link');
-    l.setAttribute('rel', 'stylesheet');
-    l.setAttribute('type', 'text/css');
-    l.setAttribute('href', url);
-    var e = document.getElementsByTagName('link')[0]
-      || document.getElementsByTagName('head')[0]
-      || document.head || document.documentElement;
-    e.parentNode.insertBefore(l, e);
-  },
-
-  loadComments: function(selector, loadFunc) {
-    var ele = document.querySelector('#comments[lazyload]');
-    if (ele) {
-      var callback = function() {
-        loadFunc();
-        ele.removeAttribute('lazyload');
-      };
-      Fluid.utils.waitElementVisible(selector, callback, CONFIG.lazyload.offset_factor);
-    } else {
-      loadFunc();
-    }
-  },
-
-  getBackgroundLightness(selectorOrElement) {
-    var ele = selectorOrElement;
-    if (typeof selectorOrElement === 'string') {
-      ele = document.querySelector(selectorOrElement);
-    }
-    var view = ele.ownerDocument.defaultView;
-    if (!view) {
-      view = window;
-    }
-    var rgbArr = view.getComputedStyle(ele).backgroundColor.replace(/rgba*\(/, '').replace(')', '').split(/,\s*/);
-    if (rgbArr.length < 3) {
-      return 0;
-    }
-    var colorCast = (0.213 * rgbArr[0]) + (0.715 * rgbArr[1]) + (0.072 * rgbArr[2]);
-    return colorCast === 0 || colorCast > 255 / 2 ? 1 : -1;
-  },
-
-  retry(handler, interval, times) {
-    if (times <= 0) {
-      return;
-    }
-    var next = function() {
-      if (--times >= 0 && !handler()) {
-        setTimeout(next, interval);
-      }
-    };
-    setTimeout(next, interval);
-  }
-
-};
-
-/**
- * Handles debouncing of events via requestAnimationFrame
- * @see http://www.html5rocks.com/en/tutorials/speed/animations/
- * @param {Function} callback The callback to handle whichever event
- */
-function Debouncer(callback) {
-  this.callback = callback;
-  this.ticking = false;
-}
-
-Debouncer.prototype = {
-  constructor: Debouncer,
-
-  /**
-   * dispatches the event to the supplied callback
-   * @private
-   */
-  update: function() {
-    this.callback && this.callback();
-    this.ticking = false;
-  },
-
-  /**
-   * ensures events don't get stacked
-   * @private
-   */
-  requestTick: function() {
-    if (!this.ticking) {
-      requestAnimationFrame(this.rafCallback || (this.rafCallback = this.update.bind(this)));
-      this.ticking = true;
-    }
-  },
-
-  /**
-   * Attach this as the event listeners
-   */
-  handleEvent: function() {
-    this.requestTick();
-  }
-};
-;
-/* global Fluid */
-
-/**
- * Modified from https://blog.skk.moe/post/hello-darkmode-my-old-friend/
- */
-(function(window, document) {
-  var rootElement = document.documentElement;
-  var colorSchemaStorageKey = 'Fluid_Color_Scheme';
-  var colorSchemaMediaQueryKey = '--color-mode';
-  var userColorSchemaAttributeName = 'data-user-color-scheme';
-  var defaultColorSchemaAttributeName = 'data-default-color-scheme';
-  var colorToggleButtonSelector = '#color-toggle-btn';
-  var colorToggleIconSelector = '#color-toggle-icon';
-  var iframeSelector = 'iframe';
-
-  function setLS(k, v) {
-    try {
-      localStorage.setItem(k, v);
-    } catch (e) {}
-  }
-
-  function removeLS(k) {
-    try {
-      localStorage.removeItem(k);
-    } catch (e) {}
-  }
-
-  function getLS(k) {
-    try {
-      return localStorage.getItem(k);
-    } catch (e) {
-      return null;
-    }
-  }
-
-  function getSchemaFromHTML() {
-    var res = rootElement.getAttribute(defaultColorSchemaAttributeName);
-    if (typeof res === 'string') {
-      return res.replace(/["'\s]/g, '');
-    }
-    return null;
-  }
-
-  function getSchemaFromCSSMediaQuery() {
-    var res = getComputedStyle(rootElement).getPropertyValue(
-      colorSchemaMediaQueryKey
-    );
-    if (typeof res === 'string') {
-      return res.replace(/["'\s]/g, '');
-    }
-    return null;
-  }
-
-  function resetSchemaAttributeAndLS() {
-    rootElement.setAttribute(userColorSchemaAttributeName, getDefaultColorSchema());
-    removeLS(colorSchemaStorageKey);
-  }
-
-  var validColorSchemaKeys = {
-    dark : true,
-    light: true
-  };
-
-  function getDefaultColorSchema() {
-    // 取默认字段的值
-    var schema = getSchemaFromHTML();
-    // 如果明确指定了 schema 则返回
-    if (validColorSchemaKeys[schema]) {
-      return schema;
-    }
-    // 默认优先按 prefers-color-scheme
-    schema = getSchemaFromCSSMediaQuery();
-    if (validColorSchemaKeys[schema]) {
-      return schema;
-    }
-    // 否则按本地时间是否大于 18 点或凌晨 0 ~ 6 点
-    var hours = new Date().getHours();
-    if (hours >= 18 || (hours >= 0 && hours <= 6)) {
-      return 'dark';
-    }
-    return 'light';
-  }
-
-  function applyCustomColorSchemaSettings(schema) {
-    // 接受从「开关」处传来的模式，或者从 localStorage 读取，否则按默认设置值
-    var current = schema || getLS(colorSchemaStorageKey) || getDefaultColorSchema();
-
-    if (current === getDefaultColorSchema()) {
-      // 当用户切换的显示模式和默认模式相同时，则恢复为自动模式
-      resetSchemaAttributeAndLS();
-    } else if (validColorSchemaKeys[current]) {
-      rootElement.setAttribute(
-        userColorSchemaAttributeName,
-        current
-      );
-    } else {
-      // 特殊情况重置
-      resetSchemaAttributeAndLS();
-      return;
-    }
-
-    // 根据当前模式设置图标
-    setButtonIcon(current);
-
-    // 设置代码高亮
-    setHighlightCSS(current);
-
-    // 设置其他应用
-    setApplications(current);
-  }
-
-  var invertColorSchemaObj = {
-    dark : 'light',
-    light: 'dark'
-  };
-
-  function getIconClass(scheme) {
-    return 'icon-' + scheme;
-  }
-
-  function toggleCustomColorSchema() {
-    var currentSetting = getLS(colorSchemaStorageKey);
-
-    if (validColorSchemaKeys[currentSetting]) {
-      // 从 localStorage 中读取模式，并取相反的模式
-      currentSetting = invertColorSchemaObj[currentSetting];
-    } else if (currentSetting === null) {
-      // 当 localStorage 中没有相关值，或者 localStorage 抛了 Error
-      // 先按照按钮的状态进行切换
-      var iconElement = document.querySelector(colorToggleIconSelector);
-      if (iconElement) {
-        currentSetting = iconElement.getAttribute('data');
-      }
-      if (!iconElement || !validColorSchemaKeys[currentSetting]) {
-        // 当 localStorage 中没有相关值，或者 localStorage 抛了 Error，则读取默认值并切换到相反的模式
-        currentSetting = invertColorSchemaObj[getSchemaFromCSSMediaQuery()];
-      }
-    } else {
-      return;
-    }
-    // 将相反的模式写入 localStorage
-    setLS(colorSchemaStorageKey, currentSetting);
-
-    return currentSetting;
-  }
-
-  function setButtonIcon(schema) {
-    if (validColorSchemaKeys[schema]) {
-      // 切换图标
-      var icon = getIconClass('dark');
-      if (schema) {
-        icon = getIconClass(schema);
-      }
-      var iconElement = document.querySelector(colorToggleIconSelector);
-      if (iconElement) {
-        iconElement.setAttribute(
-          'class',
-          'iconfont ' + icon
-        );
-        iconElement.setAttribute(
-          'data',
-          invertColorSchemaObj[schema]
-        );
-      } else {
-        // 如果图标不存在则说明图标还没加载出来，等到页面全部加载再尝试切换
-        Fluid.utils.waitElementLoaded(colorToggleIconSelector, function() {
-          var iconElement = document.querySelector(colorToggleIconSelector);
-          if (iconElement) {
-            iconElement.setAttribute(
-              'class',
-              'iconfont ' + icon
-            );
-            iconElement.setAttribute(
-              'data',
-              invertColorSchemaObj[schema]
-            );
-          }
-        });
-      }
-      if (document.documentElement.getAttribute('data-user-color-scheme')) {
-        var color = getComputedStyle(document.documentElement).getPropertyValue('--navbar-bg-color').trim()
-        document.querySelector('meta[name="theme-color"]').setAttribute('content', color)
-      }
-    }
-  }
-
-  function setHighlightCSS(schema) {
-    // 启用对应的代码高亮的样式
-    var lightCss = document.getElementById('highlight-css');
-    var darkCss = document.getElementById('highlight-css-dark');
-    if (schema === 'dark') {
-      if (darkCss) {
-        darkCss.removeAttribute('disabled');
-      }
-      if (lightCss) {
-        lightCss.setAttribute('disabled', '');
-      }
-    } else {
-      if (lightCss) {
-        lightCss.removeAttribute('disabled');
-      }
-      if (darkCss) {
-        darkCss.setAttribute('disabled', '');
-      }
-    }
-
-    setTimeout(function() {
-      // 设置代码块组件样式
-      document.querySelectorAll('.markdown-body pre').forEach((pre) => {
-        var cls = Fluid.utils.getBackgroundLightness(pre) >= 0 ? 'code-widget-light' : 'code-widget-dark';
-        var widget = pre.querySelector('.code-widget-light, .code-widget-dark');
-        if (widget) {
-          widget.classList.remove('code-widget-light', 'code-widget-dark');
-          widget.classList.add(cls);
-        }
-      });
-    }, 200);
-  }
-
-  function setApplications(schema) {
-    // 设置 remark42 评论主题
-    if (window.REMARK42) {
-      window.REMARK42.changeTheme(schema);
-    }
-
-    // 设置 cusdis 评论主题
-    if (window.CUSDIS) {
-      window.CUSDIS.setTheme(schema);
-    }
-
-    // 设置 utterances 评论主题
-    var utterances = document.querySelector('.utterances-frame');
-    if (utterances) {
-      var utterancesTheme = schema === 'dark' ? window.UtterancesThemeDark : window.UtterancesThemeLight;
-      const message = {
-        type : 'set-theme',
-        theme: utterancesTheme
-      };
-      utterances.contentWindow.postMessage(message, 'https://utteranc.es');
-    }
-
-    // 设置 giscus 评论主题
-    var giscus = document.querySelector('iframe.giscus-frame');
-    if (giscus) {
-      var giscusTheme = schema === 'dark' ? window.GiscusThemeDark : window.GiscusThemeLight;
-      const message = {
-        setConfig: {
-          theme: giscusTheme,
-        }
-      };
-      // giscus.style.cssText += 'color-scheme: normal;';
-      giscus.contentWindow.postMessage({ 'giscus': message }, 'https://giscus.app');
-    }
-  }
-
-  // 当页面加载时，将显示模式设置为 localStorage 中自定义的值（如果有的话）
-  applyCustomColorSchemaSettings();
-
-  Fluid.utils.waitElementLoaded(colorToggleIconSelector, function() {
-    applyCustomColorSchemaSettings();
-    var button = document.querySelector(colorToggleButtonSelector);
-    if (button) {
-      // 当用户点击切换按钮时，获得新的显示模式、写入 localStorage、并在页面上生效
-      button.addEventListener('click', function() {
-        applyCustomColorSchemaSettings(toggleCustomColorSchema());
-      });
-      var icon = document.querySelector(colorToggleIconSelector);
-      if (icon) {
-        // 光标悬停在按钮上时，切换图标
-        button.addEventListener('mouseenter', function() {
-          var current = icon.getAttribute('data');
-          icon.classList.replace(getIconClass(invertColorSchemaObj[current]), getIconClass(current));
-        });
-        button.addEventListener('mouseleave', function() {
-          var current = icon.getAttribute('data');
-          icon.classList.replace(getIconClass(current), getIconClass(invertColorSchemaObj[current]));
-        });
-      }
-    }
-  });
-
-  Fluid.utils.waitElementLoaded(iframeSelector, function() {
-    applyCustomColorSchemaSettings();
-  });
-  
-})(window, document);
-;
-/* global Fluid */
-
-HTMLElement.prototype.wrap = function(wrapper) {
-  this.parentNode.insertBefore(wrapper, this);
-  this.parentNode.removeChild(this);
-  wrapper.appendChild(this);
-};
-
-Fluid.events = {
-
-  registerNavbarEvent: function() {
-    var navbar = jQuery('#navbar');
-    if (navbar.length === 0) {
-      return;
-    }
-    var submenu = jQuery('#navbar .dropdown-menu');
-    if (navbar.offset().top > 0) {
-      navbar.removeClass('navbar-dark');
-      submenu.removeClass('navbar-dark');
-    }
-    Fluid.utils.listenScroll(function() {
-      navbar[navbar.offset().top > 50 ? 'addClass' : 'removeClass']('top-nav-collapse');
-      submenu[navbar.offset().top > 50 ? 'addClass' : 'removeClass']('dropdown-collapse');
-      if (navbar.offset().top > 0) {
-        navbar.removeClass('navbar-dark');
-        submenu.removeClass('navbar-dark');
-      } else {
-        navbar.addClass('navbar-dark');
-        submenu.removeClass('navbar-dark');
-      }
-    });
-    jQuery('#navbar-toggler-btn').on('click', function() {
-      jQuery('.animated-icon').toggleClass('open');
-      jQuery('#navbar').toggleClass('navbar-col-show');
-    });
-  },
-
-  registerParallaxEvent: function() {
-    var ph = jQuery('#banner[parallax="true"]');
-    if (ph.length === 0) {
-      return;
-    }
-    var board = jQuery('#board');
-    if (board.length === 0) {
-      return;
-    }
-    var parallax = function() {
-      var pxv = jQuery(window).scrollTop() / 5;
-      var offset = parseInt(board.css('margin-top'), 10);
-      var max = 96 + offset;
-      if (pxv > max) {
-        pxv = max;
-      }
-      ph.css({
-        transform: 'translate3d(0,' + pxv + 'px,0)'
-      });
-      var sideCol = jQuery('.side-col');
-      if (sideCol) {
-        sideCol.css({
-          'padding-top': pxv + 'px'
-        });
-      }
-    };
-    Fluid.utils.listenScroll(parallax);
-  },
-
-  registerScrollDownArrowEvent: function() {
-    var scrollbar = jQuery('.scroll-down-bar');
-    if (scrollbar.length === 0) {
-      return;
-    }
-    scrollbar.on('click', function() {
-      Fluid.utils.scrollToElement('#board', -jQuery('#navbar').height());
-    });
-  },
-
-  registerScrollTopArrowEvent: function() {
-    var topArrow = jQuery('#scroll-top-button');
-    if (topArrow.length === 0) {
-      return;
-    }
-    var board = jQuery('#board');
-    if (board.length === 0) {
-      return;
-    }
-    var posDisplay = false;
-    var scrollDisplay = false;
-    // Position
-    var setTopArrowPos = function() {
-      var boardRight = board[0].getClientRects()[0].right;
-      var bodyWidth = document.body.offsetWidth;
-      var right = bodyWidth - boardRight;
-      posDisplay = right >= 50;
-      topArrow.css({
-        'bottom': posDisplay && scrollDisplay ? '20px' : '-60px',
-        'right' : right - 64 + 'px'
-      });
-    };
-    setTopArrowPos();
-    jQuery(window).resize(setTopArrowPos);
-    // Display
-    var headerHeight = board.offset().top;
-    Fluid.utils.listenScroll(function() {
-      var scrollHeight = document.body.scrollTop + document.documentElement.scrollTop;
-      scrollDisplay = scrollHeight >= headerHeight;
-      topArrow.css({
-        'bottom': posDisplay && scrollDisplay ? '20px' : '-60px'
-      });
-    });
-    // Click
-    topArrow.on('click', function() {
-      jQuery('body,html').animate({
-        scrollTop: 0,
-        easing   : 'swing'
-      });
-    });
-  },
-
-  registerImageLoadedEvent: function() {
-    if (!('NProgress' in window)) { return; }
-
-    var bg = document.getElementById('banner');
-    if (bg) {
-      var src = bg.style.backgroundImage;
-      var url = src.match(/\((.*?)\)/)[1].replace(/(['"])/g, '');
-      var img = new Image();
-      img.onload = function() {
-        window.NProgress && window.NProgress.status !== null && window.NProgress.inc(0.2);
-      };
-      img.src = url;
-      if (img.complete) { img.onload(); }
-    }
-
-    var notLazyImages = jQuery('main img:not([lazyload])');
-    var total = notLazyImages.length;
-    for (const img of notLazyImages) {
-      const old = img.onload;
-      img.onload = function() {
-        old && old();
-        window.NProgress && window.NProgress.status !== null && window.NProgress.inc(0.5 / total);
-      };
-      if (img.complete) { img.onload(); }
-    }
-  },
-
-  registerRefreshCallback: function(callback) {
-    if (!Array.isArray(Fluid.events._refreshCallbacks)) {
-      Fluid.events._refreshCallbacks = [];
-    }
-    Fluid.events._refreshCallbacks.push(callback);
-  },
-
-  refresh: function() {
-    if (Array.isArray(Fluid.events._refreshCallbacks)) {
-      for (var callback of Fluid.events._refreshCallbacks) {
-        if (callback instanceof Function) {
-          callback();
+          previous = now
+          func.apply(context, args)
+          if (!timeout) context = args = null
+        } else if (!timeout && options.trailing !== false) {
+          timeout = setTimeout(later, remaining)
         }
       }
-    }
-  },
 
-  billboard: function() {
-    if (!('console' in window)) {
-      return;
-    }
-    // eslint-disable-next-line no-console
-    console.log(`
--------------------------------------------------
-|                                               |
-|      ________  __            _        __      |
-|     |_   __  |[  |          (_)      |  ]     |
-|       | |_ \\_| | | __   _   __   .--.| |      |
-|       |  _|    | |[  | | | [  |/ /'\`\\' |      |
-|      _| |_     | | | \\_/ |, | || \\__/  |      |
-|     |_____|   [___]'.__.'_/[___]'.__.;__]     |
-|                                               |
-|            Powered by Hexo x Fluid            |
-| https://github.com/fluid-dev/hexo-theme-fluid |
-|                                               |
--------------------------------------------------
-    `);
-  }
-};
-;
-/* global Fluid, CONFIG */
+      return throttled
+    },
 
-HTMLElement.prototype.wrap = function(wrapper) {
-  this.parentNode.insertBefore(wrapper, this);
-  this.parentNode.removeChild(this);
-  wrapper.appendChild(this);
-};
+    overflowPaddingR: {
+      add: () => {
+        const paddingRight = window.innerWidth - document.body.clientWidth
 
-Fluid.plugins = {
-
-  typing: function(text) {
-    if (!('Typed' in window)) { return; }
-
-    var typed = new window.Typed('#subtitle', {
-      strings: [
-        '  ',
-        text
-      ],
-      cursorChar: CONFIG.typing.cursorChar,
-      typeSpeed : CONFIG.typing.typeSpeed,
-      loop      : CONFIG.typing.loop
-    });
-    typed.stop();
-    var subtitle = document.getElementById('subtitle');
-    if (subtitle) {
-      subtitle.innerText = '';
-    }
-    jQuery(document).ready(function() {
-      typed.start();
-    });
-  },
-
-  fancyBox: function(selector) {
-    if (!CONFIG.image_zoom.enable || !('fancybox' in jQuery)) { return; }
-
-    jQuery(selector || '.markdown-body :not(a) > img, .markdown-body > img').each(function() {
-      var $image = jQuery(this);
-      var imageUrl = $image.attr('data-src') || $image.attr('src') || '';
-      if (CONFIG.image_zoom.img_url_replace) {
-        var rep = CONFIG.image_zoom.img_url_replace;
-        var r1 = rep[0] || '';
-        var r2 = rep[1] || '';
-        if (r1) {
-          if (/^re:/.test(r1)) {
-            r1 = r1.replace(/^re:/, '');
-            var reg = new RegExp(r1, 'gi');
-            imageUrl = imageUrl.replace(reg, r2);
-          } else {
-            imageUrl = imageUrl.replace(r1, r2);
+        if (paddingRight > 0) {
+          document.body.style.paddingRight = `${paddingRight}px`
+          document.body.style.overflow = 'hidden'
+          const menuElement = document.querySelector('#page-header.nav-fixed #menus')
+          if (menuElement) {
+            menuElement.style.paddingRight = `${paddingRight}px`
           }
         }
-      }
-      var $imageWrap = $image.wrap(`
-        <a class="fancybox fancybox.image" href="${imageUrl}"
-          itemscope itemtype="http://schema.org/ImageObject" itemprop="url"></a>`
-      ).parent('a');
-      if ($imageWrap.length !== 0) {
-        if ($image.is('.group-image-container img')) {
-          $imageWrap.attr('data-fancybox', 'group').attr('rel', 'group');
-        } else {
-          $imageWrap.attr('data-fancybox', 'default').attr('rel', 'default');
-        }
-
-        var imageTitle = $image.attr('title') || $image.attr('alt');
-        if (imageTitle) {
-          $imageWrap.attr('title', imageTitle).attr('data-caption', imageTitle);
+      },
+      remove: () => {
+        document.body.style.paddingRight = ''
+        document.body.style.overflow = ''
+        const menuElement = document.querySelector('#page-header.nav-fixed #menus')
+        if (menuElement) {
+          menuElement.style.paddingRight = ''
         }
       }
-    });
+    },
 
-    jQuery.fancybox.defaults.hash = false;
-    jQuery('.fancybox').fancybox({
-      loop   : true,
-      helpers: {
-        overlay: {
-          locked: false
-        }
-      }
-    });
-  },
+    snackbarShow: (text, showAction = false, duration = 2000) => {
+      const { position, bgLight, bgDark } = GLOBAL_CONFIG.Snackbar
+      const bg = document.documentElement.getAttribute('data-theme') === 'light' ? bgLight : bgDark
+      Snackbar.show({
+        text,
+        backgroundColor: bg,
+        showAction,
+        duration,
+        pos: position,
+        customClass: 'snackbar-css'
+      })
+    },
 
-  imageCaption: function(selector) {
-    if (!CONFIG.image_caption.enable) { return; }
+    diffDate: (inputDate, more = false) => {
+      const dateNow = new Date()
+      const datePost = new Date(inputDate)
+      const diffMs = dateNow - datePost
+      const diffSec = diffMs / 1000
+      const diffMin = diffSec / 60
+      const diffHour = diffMin / 60
+      const diffDay = diffHour / 24
+      const diffMonth = diffDay / 30
+      const { dateSuffix } = GLOBAL_CONFIG
 
-    jQuery(selector || `.markdown-body > p > img, .markdown-body > figure > img,
-      .markdown-body > p > a.fancybox, .markdown-body > figure > a.fancybox`).each(function() {
-      var $target = jQuery(this);
-      var $figcaption = $target.next('figcaption');
-      if ($figcaption.length !== 0) {
-        $figcaption.addClass('image-caption');
+      if (!more) return Math.floor(diffDay)
+
+      if (diffMonth > 12) return datePost.toISOString().slice(0, 10)
+      if (diffMonth >= 1) return `${Math.floor(diffMonth)} ${dateSuffix.month}`
+      if (diffDay >= 1) return `${Math.floor(diffDay)} ${dateSuffix.day}`
+      if (diffHour >= 1) return `${Math.floor(diffHour)} ${dateSuffix.hour}`
+      if (diffMin >= 1) return `${Math.floor(diffMin)} ${dateSuffix.min}`
+      return dateSuffix.just
+    },
+
+    loadComment: (dom, callback) => {
+      if ('IntersectionObserver' in window) {
+        const observerItem = new IntersectionObserver((entries) => {
+          if (entries[0].isIntersecting) {
+            callback()
+            observerItem.disconnect()
+          }
+        }, { threshold: [0] })
+        observerItem.observe(dom)
       } else {
-        var imageTitle = $target.attr('title') || $target.attr('alt');
-        if (imageTitle) {
-          $target.after(`<figcaption aria-hidden="true" class="image-caption">${imageTitle}</figcaption>`);
+        callback()
+      }
+    },
+
+    scrollToDest: (pos, time = 500) => {
+      const currentPos = window.scrollY
+      const isNavFixed = document.getElementById('page-header').classList.contains('fixed')
+      if (currentPos > pos || isNavFixed) pos = pos - 70
+
+      if ('scrollBehavior' in document.documentElement.style) {
+        window.scrollTo({
+          top: pos,
+          behavior: 'smooth'
+        })
+        return
+      }
+
+      const startTime = performance.now()
+      const animate = currentTime => {
+        const timeElapsed = currentTime - startTime
+        const progress = Math.min(timeElapsed / time, 1)
+        window.scrollTo(0, currentPos + (pos - currentPos) * progress)
+        if (progress < 1) {
+          requestAnimationFrame(animate)
         }
       }
-    });
-  },
+      requestAnimationFrame(animate)
+    },
 
-  codeWidget() {
-    var enableLang = CONFIG.code_language.enable && CONFIG.code_language.default;
-    var enableCopy = CONFIG.copy_btn && 'ClipboardJS' in window;
-    if (!enableLang && !enableCopy) {
-      return;
-    }
+    animateIn: (ele, animation) => {
+      ele.style.display = 'block'
+      ele.style.animation = animation
+    },
 
-    function getBgClass(ele) {
-      return Fluid.utils.getBackgroundLightness(ele) >= 0 ? 'code-widget-light' : 'code-widget-dark';
-    }
-
-    var copyTmpl = '';
-    copyTmpl += '<div class="code-widget">';
-    copyTmpl += 'LANG';
-    copyTmpl += '</div>';
-    jQuery('.markdown-body pre').each(function() {
-      var $pre = jQuery(this);
-      if ($pre.find('code.mermaid').length > 0) {
-        return;
+    animateOut: (ele, animation) => {
+      const handleAnimationEnd = () => {
+        ele.style.display = ''
+        ele.style.animation = ''
+        ele.removeEventListener('animationend', handleAnimationEnd)
       }
-      if ($pre.find('span.line').length > 0) {
-        return;
+      ele.addEventListener('animationend', handleAnimationEnd)
+      ele.style.animation = animation
+    },
+
+    wrap: (selector, eleType, options) => {
+      const createEle = document.createElement(eleType)
+      for (const [key, value] of Object.entries(options)) {
+        createEle.setAttribute(key, value)
+      }
+      selector.parentNode.insertBefore(createEle, selector)
+      createEle.appendChild(selector)
+    },
+
+    isHidden: ele => ele.offsetHeight === 0 && ele.offsetWidth === 0,
+
+    getEleTop: ele => {
+      let actualTop = ele.offsetTop
+      let current = ele.offsetParent
+
+      while (current !== null) {
+        actualTop += current.offsetTop
+        current = current.offsetParent
       }
 
-      var lang = '';
+      return actualTop
+    },
 
-      if (enableLang) {
-        lang = CONFIG.code_language.default;
-        if ($pre[0].children.length > 0 && $pre[0].children[0].classList.length >= 2 && $pre.children().hasClass('hljs')) {
-          lang = $pre[0].children[0].classList[1];
-        } else if ($pre[0].getAttribute('data-language')) {
-          lang = $pre[0].getAttribute('data-language');
-        } else if ($pre.parent().hasClass('sourceCode') && $pre[0].children.length > 0 && $pre[0].children[0].classList.length >= 2) {
-          lang = $pre[0].children[0].classList[1];
-          $pre.parent().addClass('code-wrapper');
-        } else if ($pre.parent().hasClass('markdown-body') && $pre[0].classList.length === 0) {
-          $pre.wrap('<div class="code-wrapper"></div>');
-        }
-        lang = lang.toUpperCase().replace('NONE', CONFIG.code_language.default);
+    loadLightbox: ele => {
+      const service = GLOBAL_CONFIG.lightbox
+
+      if (service === 'medium_zoom') {
+        mediumZoom(ele, { background: 'var(--zoom-bg)' })
       }
-      $pre.append(copyTmpl.replace('LANG', lang).replace('code-widget">',
-        getBgClass($pre[0]) + (enableCopy ? ' code-widget copy-btn" data-clipboard-snippet><i class="iconfont icon-copy"></i>' : ' code-widget">')));
 
-      if (enableCopy) {
-        var clipboard = new ClipboardJS('.copy-btn', {
-          target: function(trigger) {
-            var nodes = trigger.parentNode.childNodes;
-            for (var i = 0; i < nodes.length; i++) {
-              if (nodes[i].tagName === 'CODE') {
-                return nodes[i];
+      if (service === 'fancybox') {
+        Array.from(ele).forEach(i => {
+          if (i.parentNode.tagName !== 'A') {
+            const dataSrc = i.dataset.lazySrc || i.src
+            const dataCaption = i.title || i.alt || ''
+            btf.wrap(i, 'a', { href: dataSrc, 'data-fancybox': 'gallery', 'data-caption': dataCaption, 'data-thumb': dataSrc })
+          }
+        })
+
+        if (!window.fancyboxRun) {
+          Fancybox.bind('[data-fancybox]', {
+            Hash: false,
+            Thumbs: {
+              showOnStart: false
+            },
+            Images: {
+              Panzoom: {
+                maxScale: 4
+              }
+            },
+            Carousel: {
+              transition: 'slide'
+            },
+            Toolbar: {
+              display: {
+                left: ['infobar'],
+                middle: [
+                  'zoomIn',
+                  'zoomOut',
+                  'toggle1to1',
+                  'rotateCCW',
+                  'rotateCW',
+                  'flipX',
+                  'flipY'
+                ],
+                right: ['slideshow', 'thumbs', 'close']
               }
             }
-          }
-        });
-        clipboard.on('success', function(e) {
-          e.clearSelection();
-          e.trigger.innerHTML = e.trigger.innerHTML.replace('icon-copy', 'icon-success');
-          setTimeout(function() {
-            e.trigger.innerHTML = e.trigger.innerHTML.replace('icon-success', 'icon-copy');
-          }, 2000);
-        });
+          })
+          window.fancyboxRun = true
+        }
       }
-    });
-  }
-};
-;
-/* global Fluid, CONFIG */
+    },
 
-(function(window, document) {
-  for (const each of document.querySelectorAll('img[lazyload]')) {
-    Fluid.utils.waitElementVisible(each, function() {
-      each.removeAttribute('srcset');
-      each.removeAttribute('lazyload');
-    }, CONFIG.lazyload.offset_factor);
-  }
-})(window, document);
-;
-/* global CONFIG */
+    setLoading: {
+      add: ele => {
+        const html = `
+        <div class="loading-container">
+          <div class="loading-item">
+            <div></div><div></div><div></div><div></div><div></div>
+          </div>
+        </div>
+      `
+        ele.insertAdjacentHTML('afterend', html)
+      },
+      remove: ele => {
+        ele.nextElementSibling.remove()
+      }
+    },
 
-(function() {
-  // Modified from [hexo-generator-search](https://github.com/wzpan/hexo-generator-search)
-  function localSearchFunc(path, searchSelector, resultSelector) {
-    'use strict';
-    // 0x00. environment initialization
-    var $input = jQuery(searchSelector);
-    var $result = jQuery(resultSelector);
+    updateAnchor: anchor => {
+      if (anchor !== window.location.hash) {
+        if (!anchor) anchor = location.pathname
+        const title = GLOBAL_CONFIG_SITE.title
+        window.history.replaceState({
+          url: location.href,
+          title
+        }, title, anchor)
+      }
+    },
 
-    if ($input.length === 0) {
-      // eslint-disable-next-line no-console
-      throw Error('No element selected by the searchSelector');
-    }
-    if ($result.length === 0) {
-      // eslint-disable-next-line no-console
-      throw Error('No element selected by the resultSelector');
-    }
+    getScrollPercent: (() => {
+      let docHeight, winHeight, headerHeight, contentMath
 
-    if ($result.attr('class').indexOf('list-group-item') === -1) {
-      $result.html('<div class="m-auto text-center"><div class="spinner-border" role="status"><span class="sr-only">Loading...</span></div><br/>Loading...</div>');
-    }
-
-    jQuery.ajax({
-      // 0x01. load xml file
-      url     : path,
-      dataType: 'xml',
-      success : function(xmlResponse) {
-        // 0x02. parse xml file
-        var dataList = jQuery('entry', xmlResponse).map(function() {
-          return {
-            title  : jQuery('title', this).text(),
-            content: jQuery('content', this).text(),
-            url    : jQuery('url', this).text()
-          };
-        }).get();
-
-        if ($result.html().indexOf('list-group-item') === -1) {
-          $result.html('');
+      return (currentTop, ele) => {
+        if (!docHeight || ele.clientHeight !== docHeight) {
+          docHeight = ele.clientHeight
+          winHeight = window.innerHeight
+          headerHeight = ele.offsetTop
+          contentMath = Math.max(docHeight - winHeight, document.documentElement.scrollHeight - winHeight)
         }
 
-        $input.on('input', function() {
-          // 0x03. parse query to keywords list
-          var content = $input.val();
-          var resultHTML = '';
-          var keywords = content.trim().toLowerCase().split(/[\s-]+/);
-          $result.html('');
-          if (content.trim().length <= 0) {
-            return $input.removeClass('invalid').removeClass('valid');
-          }
-          // 0x04. perform local searching
-          dataList.forEach(function(data) {
-            var isMatch = true;
-            if (!data.title || data.title.trim() === '') {
-              data.title = 'Untitled';
-            }
-            var orig_data_title = data.title.trim();
-            var data_title = orig_data_title.toLowerCase();
-            var orig_data_content = data.content.trim().replace(/<[^>]+>/g, '');
-            var data_content = orig_data_content.toLowerCase();
-            var data_url = data.url;
-            var index_title = -1;
-            var index_content = -1;
-            var first_occur = -1;
-            // Skip matching when content is included in search and content is empty
-            if (CONFIG.include_content_in_search && data_content === '') {
-              isMatch = false;
-            } else {
-              keywords.forEach(function (keyword, i) {
-                index_title = data_title.indexOf(keyword);
-                index_content = data_content.indexOf(keyword);
-
-                if (index_title < 0 && index_content < 0) {
-                  isMatch = false;
-                } else {
-                  if (index_content < 0) {
-                    index_content = 0;
-                  }
-                  if (i === 0) {
-                    first_occur = index_content;
-                  }
-                }
-              });
-            }
-            // 0x05. show search results
-            if (isMatch) {
-              resultHTML += '<a href=\'' + data_url + '\' class=\'list-group-item list-group-item-action font-weight-bolder search-list-title\'>' + orig_data_title + '</a>';
-              var content = orig_data_content;
-              if (first_occur >= 0) {
-                // cut out 100 characters
-                var start = first_occur - 20;
-                var end = first_occur + 80;
-
-                if (start < 0) {
-                  start = 0;
-                }
-
-                if (start === 0) {
-                  end = 100;
-                }
-
-                if (end > content.length) {
-                  end = content.length;
-                }
-
-                var match_content = content.substring(start, end);
-
-                // highlight all keywords
-                keywords.forEach(function(keyword) {
-                  var regS = new RegExp(keyword, 'gi');
-                  match_content = match_content.replace(regS, '<span class="search-word">' + keyword + '</span>');
-                });
-
-                resultHTML += '<p class=\'search-list-content\'>' + match_content + '...</p>';
-              }
-            }
-          });
-          if (resultHTML.indexOf('list-group-item') === -1) {
-            return $input.addClass('invalid').removeClass('valid');
-          }
-          $input.addClass('valid').removeClass('invalid');
-          $result.html(resultHTML);
-        });
+        const scrollPercent = (currentTop - headerHeight) / contentMath
+        return Math.max(0, Math.min(100, Math.round(scrollPercent * 100)))
       }
-    });
+    })(),
+
+    addEventListenerPjax: (ele, event, fn, option = false) => {
+      ele.addEventListener(event, fn, option)
+      btf.addGlobalFn('pjaxSendOnce', () => {
+        ele.removeEventListener(event, fn, option)
+      })
+    },
+
+    removeGlobalFnEvent: (key, parent = window) => {
+      const globalFn = parent.globalFn || {}
+      const keyObj = globalFn[key]
+      if (!keyObj) return
+
+      Object.keys(keyObj).forEach(i => keyObj[i]())
+
+      delete globalFn[key]
+    },
+
+    switchComments: (el = document, path) => {
+      const switchBtn = el.querySelector('#switch-btn')
+      if (!switchBtn) return
+
+      let switchDone = false
+      const postComment = el.querySelector('#post-comment')
+      const handleSwitchBtn = () => {
+        postComment.classList.toggle('move')
+        if (!switchDone && typeof loadOtherComment === 'function') {
+          switchDone = true
+          loadOtherComment(el, path)
+        }
+      }
+      btf.addEventListenerPjax(switchBtn, 'click', handleSwitchBtn)
+    }
   }
 
-  function localSearchReset(searchSelector, resultSelector) {
-    'use strict';
-    var $input = jQuery(searchSelector);
-    var $result = jQuery(resultSelector);
-
-    if ($input.length === 0) {
-      // eslint-disable-next-line no-console
-      throw Error('No element selected by the searchSelector');
-    }
-    if ($result.length === 0) {
-      // eslint-disable-next-line no-console
-      throw Error('No element selected by the resultSelector');
-    }
-
-    $input.val('').removeClass('invalid').removeClass('valid');
-    $result.html('');
-  }
-
-  var modal = jQuery('#modalSearch');
-  var searchSelector = '#local-search-input';
-  var resultSelector = '#local-search-result';
-  modal.on('show.bs.modal', function() {
-    var path = CONFIG.search_path || '/local-search.xml';
-    localSearchFunc(path, searchSelector, resultSelector);
-  });
-  modal.on('shown.bs.modal', function() {
-    jQuery('#local-search-input').focus();
-  });
-  modal.on('hidden.bs.modal', function() {
-    localSearchReset(searchSelector, resultSelector);
-  });
-})();
+  window.btf = { ...window.btf, ...btfFn }
+})()
 ;
-/* global Fluid */
+document.addEventListener('DOMContentLoaded', () => {
+  let headerContentWidth, $nav
+  let mobileSidebarOpen = false
 
-Fluid.boot = {};
+  const adjustMenu = init => {
+    const getAllWidth = ele => Array.from(ele).reduce((width, i) => width + i.offsetWidth, 0)
 
-Fluid.boot.registerEvents = function() {
-  Fluid.events.billboard();
-  Fluid.events.registerNavbarEvent();
-  Fluid.events.registerParallaxEvent();
-  Fluid.events.registerScrollDownArrowEvent();
-  Fluid.events.registerScrollTopArrowEvent();
-  Fluid.events.registerImageLoadedEvent();
-};
+    if (init) {
+      const blogInfoWidth = getAllWidth(document.querySelector('#blog-info > a').children)
+      const menusWidth = getAllWidth(document.getElementById('menus').children)
+      headerContentWidth = blogInfoWidth + menusWidth
+      $nav = document.getElementById('nav')
+    }
 
-Fluid.boot.refresh = function() {
-  Fluid.plugins.fancyBox();
-  Fluid.plugins.codeWidget();
-  Fluid.events.refresh();
-};
+    const hideMenuIndex = window.innerWidth <= 768 || headerContentWidth > $nav.offsetWidth - 120
+    $nav.classList.toggle('hide-menu', hideMenuIndex)
+  }
 
-document.addEventListener('DOMContentLoaded', function() {
-  Fluid.boot.registerEvents();
-});
+  // 初始化header
+  const initAdjust = () => {
+    adjustMenu(true)
+    $nav.classList.add('show')
+  }
+
+  // sidebar menus
+  const sidebarFn = {
+    open: () => {
+      btf.overflowPaddingR.add()
+      btf.animateIn(document.getElementById('menu-mask'), 'to_show 0.5s')
+      document.getElementById('sidebar-menus').classList.add('open')
+      mobileSidebarOpen = true
+    },
+    close: () => {
+      btf.overflowPaddingR.remove()
+      btf.animateOut(document.getElementById('menu-mask'), 'to_hide 0.5s')
+      document.getElementById('sidebar-menus').classList.remove('open')
+      mobileSidebarOpen = false
+    }
+  }
+
+  /**
+   * 首頁top_img底下的箭頭
+   */
+  const scrollDownInIndex = () => {
+    const handleScrollToDest = () => {
+      btf.scrollToDest(document.getElementById('content-inner').offsetTop, 300)
+    }
+
+    const $scrollDownEle = document.getElementById('scroll-down')
+    $scrollDownEle && btf.addEventListenerPjax($scrollDownEle, 'click', handleScrollToDest)
+  }
+
+  /**
+   * 代碼
+   * 只適用於Hexo默認的代碼渲染
+   */
+  const addHighlightTool = () => {
+    const highLight = GLOBAL_CONFIG.highlight
+    if (!highLight) return
+
+    const { highlightCopy, highlightLang, highlightHeightLimit, highlightFullpage, highlightMacStyle, plugin } = highLight
+    const isHighlightShrink = GLOBAL_CONFIG_SITE.isHighlightShrink
+    const isShowTool = highlightCopy || highlightLang || isHighlightShrink !== undefined || highlightFullpage || highlightMacStyle
+    const $figureHighlight = plugin === 'highlight.js' ? document.querySelectorAll('figure.highlight') : document.querySelectorAll('pre[class*="language-"]')
+
+    if (!((isShowTool || highlightHeightLimit) && $figureHighlight.length)) return
+
+    const isPrismjs = plugin === 'prismjs'
+    const highlightShrinkClass = isHighlightShrink === true ? 'closed' : ''
+    const highlightShrinkEle = isHighlightShrink !== undefined ? '<i class="fas fa-angle-down expand"></i>' : ''
+    const highlightCopyEle = highlightCopy ? '<div class="copy-notice"></div><i class="fas fa-paste copy-button"></i>' : ''
+    const highlightMacStyleEle = '<div class="macStyle"><div class="mac-close"></div><div class="mac-minimize"></div><div class="mac-maximize"></div></div>'
+    const highlightFullpageEle = highlightFullpage ? '<i class="fa-solid fa-up-right-and-down-left-from-center fullpage-button"></i>' : ''
+
+    const alertInfo = (ele, text) => {
+      if (GLOBAL_CONFIG.Snackbar !== undefined) {
+        btf.snackbarShow(text)
+      } else {
+        ele.textContent = text
+        ele.style.opacity = 1
+        setTimeout(() => { ele.style.opacity = 0 }, 800)
+      }
+    }
+
+    const copy = async (text, ctx) => {
+      try {
+        await navigator.clipboard.writeText(text)
+        alertInfo(ctx, GLOBAL_CONFIG.copy.success)
+      } catch (err) {
+        console.error('Failed to copy: ', err)
+        alertInfo(ctx, GLOBAL_CONFIG.copy.noSupport)
+      }
+    }
+
+    // click events
+    const highlightCopyFn = (ele, clickEle) => {
+      const $buttonParent = ele.parentNode
+      $buttonParent.classList.add('copy-true')
+      const preCodeSelector = isPrismjs ? 'pre code' : 'table .code pre'
+      const codeElement = $buttonParent.querySelector(preCodeSelector)
+      if (!codeElement) return
+      copy(codeElement.innerText, clickEle.previousElementSibling)
+      $buttonParent.classList.remove('copy-true')
+    }
+
+    const highlightShrinkFn = ele => ele.classList.toggle('closed')
+
+    const codeFullpage = (item, clickEle) => {
+      const wrapEle = item.closest('figure.highlight')
+      const isFullpage = wrapEle.classList.toggle('code-fullpage')
+
+      document.body.style.overflow = isFullpage ? 'hidden' : ''
+      clickEle.classList.toggle('fa-down-left-and-up-right-to-center', isFullpage)
+      clickEle.classList.toggle('fa-up-right-and-down-left-from-center', !isFullpage)
+    }
+
+    const highlightToolsFn = e => {
+      const $target = e.target.classList
+      const currentElement = e.currentTarget
+      if ($target.contains('expand')) highlightShrinkFn(currentElement)
+      else if ($target.contains('copy-button')) highlightCopyFn(currentElement, e.target)
+      else if ($target.contains('fullpage-button')) codeFullpage(currentElement, e.target)
+    }
+
+    const expandCode = e => e.currentTarget.classList.toggle('expand-done')
+
+    // 獲取隱藏狀態下元素的真實高度
+    const getActualHeight = item => {
+      const hiddenElements = new Map()
+
+      const fix = () => {
+        let current = item
+        while (current !== document.body && current != null) {
+          if (window.getComputedStyle(current).display === 'none') {
+            hiddenElements.set(current, current.getAttribute('style') || '')
+          }
+          current = current.parentNode
+        }
+
+        const style = 'visibility: hidden !important; display: block !important;'
+        hiddenElements.forEach((originalStyle, elem) => {
+          elem.setAttribute('style', originalStyle ? originalStyle + ';' + style : style)
+        })
+      }
+
+      const restore = () => {
+        hiddenElements.forEach((originalStyle, elem) => {
+          if (originalStyle === '') elem.removeAttribute('style')
+          else elem.setAttribute('style', originalStyle)
+        })
+      }
+
+      fix()
+      const height = item.offsetHeight
+      restore()
+      return height
+    }
+
+    const createEle = (lang, item) => {
+      const fragment = document.createDocumentFragment()
+
+      if (isShowTool) {
+        const hlTools = document.createElement('div')
+        hlTools.className = `highlight-tools ${highlightShrinkClass}`
+        hlTools.innerHTML = highlightMacStyleEle + highlightShrinkEle + lang + highlightCopyEle + highlightFullpageEle
+        btf.addEventListenerPjax(hlTools, 'click', highlightToolsFn)
+        fragment.appendChild(hlTools)
+      }
+
+      if (highlightHeightLimit && getActualHeight(item) > highlightHeightLimit + 30) {
+        const ele = document.createElement('div')
+        ele.className = 'code-expand-btn'
+        ele.innerHTML = '<i class="fas fa-angle-double-down"></i>'
+        btf.addEventListenerPjax(ele, 'click', expandCode)
+        fragment.appendChild(ele)
+      }
+
+      isPrismjs ? item.parentNode.insertBefore(fragment, item) : item.insertBefore(fragment, item.firstChild)
+    }
+
+    $figureHighlight.forEach(item => {
+      let langName = ''
+      if (isPrismjs) btf.wrap(item, 'figure', { class: 'highlight' })
+
+      if (!highlightLang) {
+        createEle('', item)
+        return
+      }
+
+      if (isPrismjs) {
+        langName = item.getAttribute('data-language') || 'Code'
+      } else {
+        langName = item.getAttribute('class').split(' ')[1]
+        if (langName === 'plain' || langName === undefined) langName = 'Code'
+      }
+      createEle(`<div class="code-lang">${langName}</div>`, item)
+    })
+  }
+
+  /**
+   * PhotoFigcaption
+   */
+  const addPhotoFigcaption = () => {
+    if (!GLOBAL_CONFIG.isPhotoFigcaption) return
+    document.querySelectorAll('#article-container img').forEach(item => {
+      const altValue = item.title || item.alt
+      if (!altValue) return
+      const ele = document.createElement('div')
+      ele.className = 'img-alt text-center'
+      ele.textContent = altValue
+      item.insertAdjacentElement('afterend', ele)
+    })
+  }
+
+  /**
+   * Lightbox
+   */
+  const runLightbox = () => {
+    btf.loadLightbox(document.querySelectorAll('#article-container img:not(.no-lightbox)'))
+  }
+
+  /**
+   * justified-gallery 圖庫排版
+   */
+
+  const fetchUrl = async url => {
+    try {
+      const response = await fetch(url)
+      return await response.json()
+    } catch (error) {
+      console.error('Failed to fetch URL:', error)
+      return []
+    }
+  }
+
+  const runJustifiedGallery = (container, data, config) => {
+    const { isButton, limit, firstLimit, tabs } = config
+
+    const dataLength = data.length
+    const maxGroupKey = Math.ceil((dataLength - firstLimit) / limit + 1)
+
+    // Gallery configuration
+    const igConfig = {
+      gap: 5,
+      isConstantSize: true,
+      sizeRange: [150, 600],
+      // useResizeObserver: true,
+      // observeChildren: true,
+      useTransform: true
+      // useRecycle: false
+    }
+
+    const ig = new InfiniteGrid.JustifiedInfiniteGrid(container, igConfig)
+    let isLayoutHidden = false
+
+    // Utility functions
+    const sanitizeString = str => (str && str.replace(/"/g, '&quot;')) || ''
+
+    const createImageItem = item => {
+      const alt = item.alt ? `alt="${sanitizeString(item.alt)}"` : ''
+      const title = item.title ? `title="${sanitizeString(item.title)}"` : ''
+      return `<div class="item">
+        <img src="${item.url}" data-grid-maintained-target="true" ${alt} ${title} />
+      </div>`
+    }
+
+    const getItems = (nextGroupKey, count, isFirst = false) => {
+      const startIndex = isFirst ? (nextGroupKey - 1) * count : (nextGroupKey - 2) * count + firstLimit
+      return data.slice(startIndex, startIndex + count).map(createImageItem)
+    }
+
+    // Load more button
+    const addLoadMoreButton = container => {
+      const button = document.createElement('button')
+      button.innerHTML = `${GLOBAL_CONFIG.infinitegrid.buttonText}<i class="fa-solid fa-arrow-down"></i>`
+
+      button.addEventListener('click', () => {
+        button.remove()
+        btf.setLoading.add(container)
+        appendItems(ig.getGroups().length + 1, limit)
+      }, { once: true })
+
+      container.insertAdjacentElement('afterend', button)
+    }
+
+    const appendItems = (nextGroupKey, count, isFirst) => {
+      ig.append(getItems(nextGroupKey, count, isFirst), nextGroupKey)
+    }
+
+    // Event handlers
+    const handleRenderComplete = e => {
+      if (tabs) {
+        const parentNode = container.parentNode
+        if (isLayoutHidden) {
+          parentNode.style.visibility = 'visible'
+        }
+        if (container.offsetHeight === 0) {
+          parentNode.style.visibility = 'hidden'
+          isLayoutHidden = true
+        }
+      }
+
+      const { updated, isResize, mounted } = e
+      if (!updated.length || !mounted.length || isResize) return
+
+      btf.loadLightbox(container.querySelectorAll('img:not(.medium-zoom-image)'))
+
+      if (ig.getGroups().length === maxGroupKey) {
+        btf.setLoading.remove(container)
+        !tabs && ig.off('renderComplete', handleRenderComplete)
+        return
+      }
+
+      if (isButton) {
+        btf.setLoading.remove(container)
+        addLoadMoreButton(container)
+      }
+    }
+
+    const handleRequestAppend = btf.debounce(e => {
+      const nextGroupKey = (+e.groupKey || 0) + 1
+
+      if (nextGroupKey === 1) appendItems(nextGroupKey, firstLimit, true)
+      else appendItems(nextGroupKey, limit)
+
+      if (nextGroupKey === maxGroupKey) ig.off('requestAppend', handleRequestAppend)
+    }, 300)
+
+    btf.setLoading.add(container)
+    ig.on('renderComplete', handleRenderComplete)
+
+    if (isButton) {
+      appendItems(1, firstLimit, true)
+    } else {
+      ig.on('requestAppend', handleRequestAppend)
+      ig.renderItems()
+    }
+
+    btf.addGlobalFn('pjaxSendOnce', () => ig.destroy())
+  }
+
+  const addJustifiedGallery = async (elements, tabs = false) => {
+    if (!elements.length) return
+
+    const initGallery = async () => {
+      for (const element of elements) {
+        if (btf.isHidden(element) || element.classList.contains('loaded')) continue
+
+        const config = {
+          isButton: element.getAttribute('data-button') === 'true',
+          limit: parseInt(element.getAttribute('data-limit'), 10),
+          firstLimit: parseInt(element.getAttribute('data-first'), 10),
+          tabs
+        }
+
+        const container = element.firstElementChild
+        const content = container.textContent
+        container.textContent = ''
+        element.classList.add('loaded')
+
+        try {
+          const data = element.getAttribute('data-type') === 'url' ? await fetchUrl(content) : JSON.parse(content)
+          runJustifiedGallery(container, data, config)
+        } catch (error) {
+          console.error('Gallery data parsing failed:', error)
+        }
+      }
+    }
+
+    if (typeof InfiniteGrid === 'function') {
+      await initGallery()
+    } else {
+      await btf.getScript(GLOBAL_CONFIG.infinitegrid.js)
+      await initGallery()
+    }
+  }
+
+  /**
+   * rightside scroll percent
+   */
+  const rightsideScrollPercent = currentTop => {
+    const scrollPercent = btf.getScrollPercent(currentTop, document.body)
+    const goUpElement = document.getElementById('go-up')
+
+    if (scrollPercent < 95) {
+      goUpElement.classList.add('show-percent')
+      goUpElement.querySelector('.scroll-percent').textContent = scrollPercent
+    } else {
+      goUpElement.classList.remove('show-percent')
+    }
+  }
+
+  /**
+   * 滾動處理
+   */
+  const scrollFn = () => {
+    const $rightside = document.getElementById('rightside')
+    const innerHeight = window.innerHeight + 56
+    let initTop = 0
+    const $header = document.getElementById('page-header')
+    const isChatBtn = typeof chatBtn !== 'undefined'
+    const isShowPercent = GLOBAL_CONFIG.percent.rightside
+
+    // 檢查文檔高度是否小於視窗高度
+    const checkDocumentHeight = () => {
+      if (document.body.scrollHeight <= innerHeight) {
+        $rightside.classList.add('rightside-show')
+        return true
+      }
+      return false
+    }
+
+    // 如果文檔高度小於視窗高度,直接返回
+    if (checkDocumentHeight()) return
+
+    // find the scroll direction
+    const scrollDirection = currentTop => {
+      const result = currentTop > initTop // true is down & false is up
+      initTop = currentTop
+      return result
+    }
+
+    let flag = ''
+    const scrollTask = btf.throttle(() => {
+      const currentTop = window.scrollY || document.documentElement.scrollTop
+      const isDown = scrollDirection(currentTop)
+      if (currentTop > 56) {
+        if (flag === '') {
+          $header.classList.add('nav-fixed')
+          $rightside.classList.add('rightside-show')
+        }
+
+        if (isDown) {
+          if (flag !== 'down') {
+            $header.classList.remove('nav-visible')
+            isChatBtn && window.chatBtn.hide()
+            flag = 'down'
+          }
+        } else {
+          if (flag !== 'up') {
+            $header.classList.add('nav-visible')
+            isChatBtn && window.chatBtn.show()
+            flag = 'up'
+          }
+        }
+      } else {
+        flag = ''
+        if (currentTop === 0) {
+          $header.classList.remove('nav-fixed', 'nav-visible')
+        }
+        $rightside.classList.remove('rightside-show')
+      }
+
+      isShowPercent && rightsideScrollPercent(currentTop)
+      checkDocumentHeight()
+    }, 300)
+
+    btf.addEventListenerPjax(window, 'scroll', scrollTask, { passive: true })
+  }
+
+  /**
+  * toc,anchor
+  */
+  const scrollFnToDo = () => {
+    const isToc = GLOBAL_CONFIG_SITE.isToc
+    const isAnchor = GLOBAL_CONFIG.isAnchor
+    const $article = document.getElementById('article-container')
+
+    if (!($article && (isToc || isAnchor))) return
+
+    let $tocLink, $cardToc, autoScrollToc, $tocPercentage, isExpand
+
+    if (isToc) {
+      const $cardTocLayout = document.getElementById('card-toc')
+      $cardToc = $cardTocLayout.querySelector('.toc-content')
+      $tocLink = $cardToc.querySelectorAll('.toc-link')
+      $tocPercentage = $cardTocLayout.querySelector('.toc-percentage')
+      isExpand = $cardToc.classList.contains('is-expand')
+
+      // toc元素點擊
+      const tocItemClickFn = e => {
+        const target = e.target.closest('.toc-link')
+        if (!target) return
+
+        e.preventDefault()
+        btf.scrollToDest(btf.getEleTop(document.getElementById(decodeURI(target.getAttribute('href')).replace('#', ''))), 300)
+        if (window.innerWidth < 900) {
+          $cardTocLayout.classList.remove('open')
+        }
+      }
+
+      btf.addEventListenerPjax($cardToc, 'click', tocItemClickFn)
+
+      autoScrollToc = item => {
+        const sidebarHeight = $cardToc.clientHeight
+        const itemOffsetTop = item.offsetTop
+        const itemHeight = item.clientHeight
+        const scrollTop = $cardToc.scrollTop
+        const offset = itemOffsetTop - scrollTop
+        const middlePosition = (sidebarHeight - itemHeight) / 2
+
+        if (offset !== middlePosition) {
+          $cardToc.scrollTop = scrollTop + (offset - middlePosition)
+        }
+      }
+
+      // 處理 hexo-blog-encrypt 事件
+      $cardToc.style.display = 'block'
+    }
+
+    // find head position & add active class
+    const $articleList = $article.querySelectorAll('h1,h2,h3,h4,h5,h6')
+    let detectItem = ''
+
+    const findHeadPosition = top => {
+      if (top === 0) return false
+
+      let currentId = ''
+      let currentIndex = ''
+
+      for (let i = 0; i < $articleList.length; i++) {
+        const ele = $articleList[i]
+        if (top > btf.getEleTop(ele) - 80) {
+          const id = ele.id
+          currentId = id ? '#' + encodeURI(id) : ''
+          currentIndex = i
+        } else {
+          break
+        }
+      }
+
+      if (detectItem === currentIndex) return
+
+      if (isAnchor) btf.updateAnchor(currentId)
+
+      detectItem = currentIndex
+
+      if (isToc) {
+        $cardToc.querySelectorAll('.active').forEach(i => i.classList.remove('active'))
+
+        if (currentId) {
+          const currentActive = $tocLink[currentIndex]
+          currentActive.classList.add('active')
+
+          setTimeout(() => autoScrollToc(currentActive), 0)
+
+          if (!isExpand) {
+            let parent = currentActive.parentNode
+            while (!parent.matches('.toc')) {
+              if (parent.matches('li')) parent.classList.add('active')
+              parent = parent.parentNode
+            }
+          }
+        }
+      }
+    }
+
+    // main of scroll
+    const tocScrollFn = btf.throttle(() => {
+      const currentTop = window.scrollY || document.documentElement.scrollTop
+      if (isToc && GLOBAL_CONFIG.percent.toc) {
+        $tocPercentage.textContent = btf.getScrollPercent(currentTop, $article)
+      }
+      findHeadPosition(currentTop)
+    }, 100)
+
+    btf.addEventListenerPjax(window, 'scroll', tocScrollFn, { passive: true })
+  }
+
+  const handleThemeChange = mode => {
+    const globalFn = window.globalFn || {}
+    const themeChange = globalFn.themeChange || {}
+    if (!themeChange) {
+      return
+    }
+
+    Object.keys(themeChange).forEach(key => {
+      const themeChangeFn = themeChange[key]
+      if (['disqus', 'disqusjs'].includes(key)) {
+        setTimeout(() => themeChangeFn(mode), 300)
+      } else {
+        themeChangeFn(mode)
+      }
+    })
+  }
+
+  /**
+   * Rightside
+   */
+  const rightSideFn = {
+    readmode: () => { // read mode
+      const $body = document.body
+      const newEle = document.createElement('button')
+
+      const exitReadMode = () => {
+        $body.classList.remove('read-mode')
+        newEle.remove()
+        newEle.removeEventListener('click', exitReadMode)
+      }
+
+      $body.classList.add('read-mode')
+      newEle.type = 'button'
+      newEle.className = 'fas fa-sign-out-alt exit-readmode'
+      newEle.addEventListener('click', exitReadMode)
+      $body.appendChild(newEle)
+    },
+    darkmode: () => { // switch between light and dark mode
+      const willChangeMode = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark'
+      if (willChangeMode === 'dark') {
+        btf.activateDarkMode()
+        GLOBAL_CONFIG.Snackbar !== undefined && btf.snackbarShow(GLOBAL_CONFIG.Snackbar.day_to_night)
+      } else {
+        btf.activateLightMode()
+        GLOBAL_CONFIG.Snackbar !== undefined && btf.snackbarShow(GLOBAL_CONFIG.Snackbar.night_to_day)
+      }
+      btf.saveToLocal.set('theme', willChangeMode, 2)
+      handleThemeChange(willChangeMode)
+    },
+    'rightside-config': item => { // Show or hide rightside-hide-btn
+      const hideLayout = item.firstElementChild
+      if (hideLayout.classList.contains('show')) {
+        hideLayout.classList.add('status')
+        setTimeout(() => {
+          hideLayout.classList.remove('status')
+        }, 300)
+      }
+
+      hideLayout.classList.toggle('show')
+    },
+    'go-up': () => { // Back to top
+      btf.scrollToDest(0, 500)
+    },
+    'hide-aside-btn': () => { // Hide aside
+      const $htmlDom = document.documentElement.classList
+      const saveStatus = $htmlDom.contains('hide-aside') ? 'show' : 'hide'
+      btf.saveToLocal.set('aside-status', saveStatus, 2)
+      $htmlDom.toggle('hide-aside')
+    },
+    'mobile-toc-button': (p, item) => { // Show mobile toc
+      const tocEle = document.getElementById('card-toc')
+      tocEle.style.transition = 'transform 0.3s ease-in-out'
+
+      const tocEleHeight = tocEle.clientHeight
+      const btData = item.getBoundingClientRect()
+
+      const tocEleBottom = window.innerHeight - btData.bottom - 30
+      if (tocEleHeight > tocEleBottom) {
+        tocEle.style.transformOrigin = `right ${tocEleHeight - tocEleBottom - btData.height / 2}px`
+      }
+
+      tocEle.classList.toggle('open')
+      tocEle.addEventListener('transitionend', () => {
+        tocEle.style.cssText = ''
+      }, { once: true })
+    },
+    'chat-btn': () => { // Show chat
+      window.chatBtnFn()
+    },
+    translateLink: () => { // switch between traditional and simplified chinese
+      window.translateFn.translatePage()
+    }
+  }
+
+  document.getElementById('rightside').addEventListener('click', e => {
+    const $target = e.target.closest('[id]')
+    if ($target && rightSideFn[$target.id]) {
+      rightSideFn[$target.id](e.currentTarget, $target)
+    }
+  })
+
+  /**
+   * menu
+   * 側邊欄sub-menu 展開/收縮
+   */
+  const clickFnOfSubMenu = () => {
+    const handleClickOfSubMenu = e => {
+      const target = e.target.closest('.site-page.group')
+      if (!target) return
+      target.classList.toggle('hide')
+    }
+
+    const menusItems = document.querySelector('#sidebar-menus .menus_items')
+    menusItems && menusItems.addEventListener('click', handleClickOfSubMenu)
+  }
+
+  /**
+   * 手机端目录点击
+   */
+  const openMobileMenu = () => {
+    const toggleMenu = document.getElementById('toggle-menu')
+    if (!toggleMenu) return
+    btf.addEventListenerPjax(toggleMenu, 'click', () => { sidebarFn.open() })
+  }
+
+  /**
+ * 複製時加上版權信息
+ */
+  const addCopyright = () => {
+    const { limitCount, languages } = GLOBAL_CONFIG.copyright
+
+    const handleCopy = (e) => {
+      e.preventDefault()
+      const copyFont = window.getSelection(0).toString()
+      let textFont = copyFont
+      if (copyFont.length > limitCount) {
+        textFont = `${copyFont}\n\n\n${languages.author}\n${languages.link}${window.location.href}\n${languages.source}\n${languages.info}`
+      }
+      if (e.clipboardData) {
+        return e.clipboardData.setData('text', textFont)
+      } else {
+        return window.clipboardData.setData('text', textFont)
+      }
+    }
+
+    document.body.addEventListener('copy', handleCopy)
+  }
+
+  /**
+   * 網頁運行時間
+   */
+  const addRuntime = () => {
+    const $runtimeCount = document.getElementById('runtimeshow')
+    if ($runtimeCount) {
+      const publishDate = $runtimeCount.getAttribute('data-publishDate')
+      $runtimeCount.textContent = `${btf.diffDate(publishDate)} ${GLOBAL_CONFIG.runtime}`
+    }
+  }
+
+  /**
+   * 最後一次更新時間
+   */
+  const addLastPushDate = () => {
+    const $lastPushDateItem = document.getElementById('last-push-date')
+    if ($lastPushDateItem) {
+      const lastPushDate = $lastPushDateItem.getAttribute('data-lastPushDate')
+      $lastPushDateItem.textContent = btf.diffDate(lastPushDate, true)
+    }
+  }
+
+  /**
+   * table overflow
+   */
+  const addTableWrap = () => {
+    const $table = document.querySelectorAll('#article-container table')
+    if (!$table.length) return
+
+    $table.forEach(item => {
+      if (!item.closest('.highlight')) {
+        btf.wrap(item, 'div', { class: 'table-wrap' })
+      }
+    })
+  }
+
+  /**
+   * tag-hide
+   */
+  const clickFnOfTagHide = () => {
+    const hideButtons = document.querySelectorAll('#article-container .hide-button')
+    if (!hideButtons.length) return
+    hideButtons.forEach(item => item.addEventListener('click', e => {
+      const currentTarget = e.currentTarget
+      currentTarget.classList.add('open')
+      addJustifiedGallery(currentTarget.nextElementSibling.querySelectorAll('.gallery-container'))
+    }, { once: true }))
+  }
+
+  const tabsFn = () => {
+    const navTabsElements = document.querySelectorAll('#article-container .tabs')
+    if (!navTabsElements.length) return
+
+    const setActiveClass = (elements, activeIndex) => {
+      elements.forEach((el, index) => {
+        el.classList.toggle('active', index === activeIndex)
+      })
+    }
+
+    const handleNavClick = e => {
+      const target = e.target.closest('button')
+      if (!target || target.classList.contains('active')) return
+
+      const navItems = [...e.currentTarget.children]
+      const tabContents = [...e.currentTarget.nextElementSibling.children]
+      const indexOfButton = navItems.indexOf(target)
+      setActiveClass(navItems, indexOfButton)
+      e.currentTarget.classList.remove('no-default')
+      setActiveClass(tabContents, indexOfButton)
+      addJustifiedGallery(tabContents[indexOfButton].querySelectorAll('.gallery-container'), true)
+    }
+
+    const handleToTopClick = tabElement => e => {
+      if (e.target.closest('button')) {
+        btf.scrollToDest(btf.getEleTop(tabElement), 300)
+      }
+    }
+
+    navTabsElements.forEach(tabElement => {
+      btf.addEventListenerPjax(tabElement.firstElementChild, 'click', handleNavClick)
+      btf.addEventListenerPjax(tabElement.lastElementChild, 'click', handleToTopClick(tabElement))
+    })
+  }
+
+  const toggleCardCategory = () => {
+    const cardCategory = document.querySelector('#aside-cat-list.expandBtn')
+    if (!cardCategory) return
+
+    const handleToggleBtn = e => {
+      const target = e.target
+      if (target.nodeName === 'I') {
+        e.preventDefault()
+        target.parentNode.classList.toggle('expand')
+      }
+    }
+    btf.addEventListenerPjax(cardCategory, 'click', handleToggleBtn, true)
+  }
+
+  const addPostOutdateNotice = () => {
+    const ele = document.getElementById('post-outdate-notice')
+    if (!ele) return
+
+    const { limitDay, messagePrev, messageNext, postUpdate } = JSON.parse(ele.getAttribute('data'))
+    const diffDay = btf.diffDate(postUpdate)
+    if (diffDay >= limitDay) {
+      ele.textContent = `${messagePrev} ${diffDay} ${messageNext}`
+      ele.hidden = false
+    }
+  }
+
+  const lazyloadImg = () => {
+    window.lazyLoadInstance = new LazyLoad({
+      elements_selector: 'img',
+      threshold: 0,
+      data_src: 'lazy-src'
+    })
+
+    btf.addGlobalFn('pjaxComplete', () => {
+      window.lazyLoadInstance.update()
+    }, 'lazyload')
+  }
+
+  const relativeDate = selector => {
+    selector.forEach(item => {
+      item.textContent = btf.diffDate(item.getAttribute('datetime'), true)
+      item.style.display = 'inline'
+    })
+  }
+
+  const justifiedIndexPostUI = () => {
+    const recentPostsElement = document.getElementById('recent-posts')
+    if (!(recentPostsElement && recentPostsElement.classList.contains('masonry'))) return
+
+    const init = () => {
+      const masonryItem = new InfiniteGrid.MasonryInfiniteGrid('.recent-post-items', {
+        gap: { horizontal: 10, vertical: 20 },
+        useTransform: true,
+        useResizeObserver: true
+      })
+      masonryItem.renderItems()
+      btf.addGlobalFn('pjaxCompleteOnce', () => { masonryItem.destroy() }, 'removeJustifiedIndexPostUI')
+    }
+
+    typeof InfiniteGrid === 'function' ? init() : btf.getScript(`${GLOBAL_CONFIG.infinitegrid.js}`).then(init)
+  }
+
+  const unRefreshFn = () => {
+    window.addEventListener('resize', () => {
+      adjustMenu(false)
+      mobileSidebarOpen && btf.isHidden(document.getElementById('toggle-menu')) && sidebarFn.close()
+    })
+
+    const menuMask = document.getElementById('menu-mask')
+    menuMask && menuMask.addEventListener('click', () => { sidebarFn.close() })
+
+    clickFnOfSubMenu()
+    GLOBAL_CONFIG.islazyloadPlugin && lazyloadImg()
+    GLOBAL_CONFIG.copyright !== undefined && addCopyright()
+
+    if (GLOBAL_CONFIG.autoDarkmode) {
+      window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', e => {
+        if (btf.saveToLocal.get('theme') !== undefined) return
+        e.matches ? handleThemeChange('dark') : handleThemeChange('light')
+      })
+    }
+  }
+
+  const forPostFn = () => {
+    addHighlightTool()
+    addPhotoFigcaption()
+    addJustifiedGallery(document.querySelectorAll('#article-container .gallery-container'))
+    runLightbox()
+    scrollFnToDo()
+    addTableWrap()
+    clickFnOfTagHide()
+    tabsFn()
+  }
+
+  const refreshFn = () => {
+    initAdjust()
+    justifiedIndexPostUI()
+
+    if (GLOBAL_CONFIG_SITE.pageType === 'post') {
+      addPostOutdateNotice()
+      GLOBAL_CONFIG.relativeDate.post && relativeDate(document.querySelectorAll('#post-meta time'))
+    } else {
+      GLOBAL_CONFIG.relativeDate.homepage && relativeDate(document.querySelectorAll('#recent-posts time'))
+      GLOBAL_CONFIG.runtime && addRuntime()
+      addLastPushDate()
+      toggleCardCategory()
+    }
+
+    GLOBAL_CONFIG_SITE.pageType === 'home' && scrollDownInIndex()
+    scrollFn()
+
+    forPostFn()
+    GLOBAL_CONFIG_SITE.pageType !== 'shuoshuo' && btf.switchComments(document)
+    openMobileMenu()
+  }
+
+  btf.addGlobalFn('pjaxComplete', refreshFn, 'refreshFn')
+  refreshFn()
+  unRefreshFn()
+
+  // 處理 hexo-blog-encrypt 事件
+  window.addEventListener('hexo-blog-decrypt', e => {
+    forPostFn()
+    window.translateFn.translateInitialization()
+    Object.values(window.globalFn.encrypt).forEach(fn => {
+      fn()
+    })
+  })
+})
 ;
 (() => {
   'use strict';
